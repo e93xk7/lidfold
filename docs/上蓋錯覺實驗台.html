@@ -1,0 +1,341 @@
+<title>上蓋錯覺實驗台</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg:#0f1317; --panel:#171d23; --panel-2:#1f262e; --line:#2a333c;
+    --text:#e6e9ec; --muted:#8b95a0; --accent:#ff8a4c; --accent-ink:#1a0d06;
+    --good:#6fd39a; --warn:#ffcf5c;
+    --sans:"IBM Plex Sans",-apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    color-scheme:dark;
+  }
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;padding-inline:16px;padding-block:14px 24px;box-sizing:border-box}
+  *{box-sizing:border-box}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  h1{font-size:18px;font-weight:600;margin:0;letter-spacing:.01em}
+  header p{margin:0;color:var(--muted);max-width:60ch}
+  .lab{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
+  @media (max-width:820px){.lab{grid-template-columns:1fr}}
+  .stage{position:relative;background:#06080a;border:1px solid var(--line);border-radius:6px;overflow:hidden;aspect-ratio:16/10;max-width:100%}
+  .stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+  .stage canvas:active{cursor:grabbing}
+  .hud{position:absolute;left:12px;top:10px;display:flex;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted);pointer-events:none}
+  .hud b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+  .hud .state{color:var(--accent)}
+  .hint{position:absolute;right:12px;bottom:10px;font-size:11px;color:var(--muted);pointer-events:none}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:14px}
+  .group{display:flex;flex-direction:column;gap:8px}
+  .label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .row{display:flex;align-items:center;gap:10px}
+  .row.wrap{flex-wrap:wrap}
+  input[type=range]{flex:1;accent-color:var(--accent);min-width:0}
+  .val{font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:5ch;text-align:right}
+  button{font:inherit;font-weight:500;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:7px 11px;cursor:pointer}
+  button:hover{border-color:#3a4650}
+  button:focus-visible,input:focus-visible,label:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+  .toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+  .file{display:flex;flex-direction:column;gap:6px}
+  .file input{font-size:12px;color:var(--muted)}
+  .note{font-size:12px;color:var(--muted);margin:0}
+  .note strong{color:var(--text);font-weight:500}
+  .legend{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;color:var(--muted)}
+  .legend code{font-family:var(--mono);color:var(--text)}
+  .readout{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+  .readout span:nth-child(odd){color:var(--muted)}
+  .verdict{border-top:1px solid var(--line);padding-top:12px}
+  .verdict ol{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:12px}
+  .verdict li{margin-bottom:4px}
+  @media (prefers-reduced-motion:reduce){.stage canvas{cursor:default}}
+</style>
+
+<header>
+  <h1>上蓋錯覺實驗台</h1>
+  <p>單片螢幕、內容反向旋轉：拖曳畫面移動你的眼睛位置，看「內容固定在空間裡」這個錯覺在 MacBook 上成不成立。</p>
+</header>
+
+<div class="lab">
+  <div class="stage">
+    <canvas id="c"></canvas>
+    <div class="hud">
+      <span>θ <b id="hudTheta">110.0°</b></span>
+      <span>p <b id="hudP">0.00</b></span>
+      <span>dθ/dt <b id="hudVel">0</b> °/s</span>
+      <span class="state" id="hudState">靜止</span>
+    </div>
+    <div class="hint">拖曳＝移動視角　滾輪＝開合上蓋</div>
+  </div>
+
+  <aside class="panel">
+    <div class="group">
+      <div class="label">上蓋角度</div>
+      <div class="row">
+        <input type="range" id="theta" min="0" max="120" step="0.5" value="110" aria-label="上蓋角度">
+        <span class="val" id="thetaVal">110°</span>
+      </div>
+      <div class="row wrap">
+        <button class="primary" id="btnClose">闔上</button>
+        <button id="btnOpen">打開</button>
+        <button id="btnEye">眼睛回預設位置</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">比較</div>
+      <label class="toggle"><input type="checkbox" id="comp" checked> 反向旋轉補償（內容固定在空間）</label>
+      <label class="toggle"><input type="checkbox" id="blur" checked> 後段漸進模糊＋變暗</label>
+      <label class="toggle"><input type="checkbox" id="ghost"> 顯示虛擬平面（補償的目標）</label>
+    </div>
+
+    <div class="group">
+      <div class="label">素材</div>
+      <div class="file">
+        <input type="file" id="shot" accept="image/*" aria-label="上傳你的螢幕截圖">
+        <p class="note">預設是一張畫出來的桌面。上傳你自己的 Mac 截圖會更準。</p>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">映射</div>
+      <div class="readout">
+        <span>θ_open</span><span>110°（正常開蓋）</span>
+        <span>θ_off</span><span>15°（macOS 關螢幕，待實測）</span>
+        <span>p</span><span>(θ_open − θ) / (θ_open − θ_off)</span>
+        <span>模糊</span><span>smoothstep(0.35, 0.85, p)</span>
+        <span>變暗</span><span>1 − 0.7·smoothstep(0.5, 1, p)</span>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <div class="label">怎麼判</div>
+      <ol>
+        <li>眼睛留在預設位置，按「闔上」。內容有沒有像貼在原本的位置不動？</li>
+        <li>關掉補償再按一次。差別大不大？差別不大＝這個專案不值得做。</li>
+        <li>把眼睛拖到旁邊再闔一次。錯覺什麼時候破？破得快＝M3 要假設一個固定的眼睛位置。</li>
+      </ol>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  if(!window.THREE){ document.querySelector('.stage').insertAdjacentHTML('beforeend','<p style="position:absolute;inset:0;display:grid;place-items:center;color:#8b95a0">Three.js 沒載到，重新整理一次。</p>'); return; }
+
+  // ---------- constants (metres, degrees) ----------
+  const THETA_OPEN = 110, THETA_OFF = 15;
+  const W = 0.30, D = 0.21, LID_H = 0.20;           // base width/depth, lid height
+  const HINGE_Z = -D/2;                              // hinge at back edge
+
+  // ---------- state ----------
+  const st = { theta: THETA_OPEN, comp: true, blur: true, ghost: false,
+               playing: null, lastTheta: THETA_OPEN, vel: 0,
+               az: 0, el: 36, dist: 0.50 };
+
+  // ---------- default "screenshot": a drawn desktop (generic, no brand assets) ----------
+  function drawDesktop(){
+    const c = document.createElement('canvas'); c.width = 1440; c.height = 900;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0,0,1440,900);
+    grad.addColorStop(0,'#1c2a5a'); grad.addColorStop(.55,'#2d5f8a'); grad.addColorStop(1,'#d98a4e');
+    g.fillStyle = grad; g.fillRect(0,0,1440,900);
+    // soft blobs
+    for(const [x,y,r,col] of [[1100,200,260,'rgba(255,170,110,.35)'],[300,700,320,'rgba(90,160,220,.35)']]){
+      const rg = g.createRadialGradient(x,y,0,x,y,r); rg.addColorStop(0,col); rg.addColorStop(1,'rgba(0,0,0,0)');
+      g.fillStyle = rg; g.fillRect(x-r,y-r,2*r,2*r);
+    }
+    // menu bar
+    g.fillStyle='rgba(255,255,255,.72)'; g.fillRect(0,0,1440,26);
+    g.fillStyle='#1c1c1e'; g.font='600 14px IBM Plex Sans, sans-serif';
+    g.fillText('Finder',44,18); g.font='14px IBM Plex Sans, sans-serif';
+    ['檔案','編輯','顯示方式','前往','視窗','輔助說明'].forEach((t,i)=>g.fillText(t,110+i*64,18));
+    g.textAlign='right'; g.fillText('週三 9月16日  21:42',1420,18); g.textAlign='left';
+    // window 1: editor
+    function win(x,y,w,h,title){
+      g.save(); g.shadowColor='rgba(0,0,0,.35)'; g.shadowBlur=30; g.shadowOffsetY=12;
+      g.fillStyle='#f5f5f7'; roundRect(g,x,y,w,h,12); g.fill(); g.restore();
+      g.fillStyle='#e6e6ea'; roundRect(g,x,y,w,36,12); g.fill(); g.fillRect(x,y+18,w,18);
+      [['#ff5f57',0],['#febc2e',1],['#28c840',2]].forEach(([col,i])=>{g.fillStyle=col;g.beginPath();g.arc(x+18+i*20,y+18,6,0,7);g.fill();});
+      g.fillStyle='#3a3a3c'; g.font='500 13px IBM Plex Sans, sans-serif'; g.textAlign='center'; g.fillText(title,x+w/2,y+23); g.textAlign='left';
+    }
+    win(90,80,720,520,'Snail Ball — 守門紀錄.md');
+    g.fillStyle='#1d1d1f'; g.font='15px IBM Plex Mono, monospace';
+    const lines=['# 守門：2026-09-05','','| 宣稱 | 結果 | 依據 |','|---|---|---|','| 比例尺正確 | ❌ | 剛體兩點距離漂 ±16%，5–9σ |','| 24% 滑動 ±15% | ❌ | 分母那把尺已證非定值 |','| v 4.0–30.3 cm/s | ❌ | 下界實為 −15.8 cm/s |','','a_max = g·sin(12°) = 2.04 m/s²','實測 c₃ = +0.00103 → 加速度在變大','','→ 「斜面不夠長」不可否證，退回研究對話'];
+    lines.forEach((l,i)=>g.fillText(l,120,150+i*28));
+    win(860,140,480,380,'θ(t) — 12° 蜂蜜');
+    // a small plot
+    g.strokeStyle='#1d1d1f'; g.lineWidth=3; g.strokeRect(900,210,400,270);
+    g.lineWidth=2; g.strokeStyle='#C00000'; g.beginPath();
+    for(let i=0;i<=80;i++){const x=900+i*5, t=i/80; const y=480-250*(t*t*0.7+0.15*Math.sin(t*18)*(1-t)); i?g.lineTo(x,y):g.moveTo(x,y);} g.stroke();
+    g.fillStyle='#1d1d1f'; g.font='600 13px IBM Plex Sans, sans-serif'; g.fillText('s  [cm]',905,205); g.textAlign='right'; g.fillText('t  [s]',1300,500); g.textAlign='left';
+    // dock
+    g.fillStyle='rgba(255,255,255,.55)'; roundRect(g,470,820,500,64,18); g.fill();
+    const cols=['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#64748b'];
+    cols.forEach((col,i)=>{g.fillStyle=col; roundRect(g,486+i*61,830,44,44,10); g.fill();});
+    return c;
+  }
+  function roundRect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath();}
+
+  function blurCanvas(src, px){
+    const c=document.createElement('canvas'); c.width=src.width; c.height=src.height;
+    const g=c.getContext('2d'); g.filter='blur('+px+'px)'; g.drawImage(src,0,0);
+    g.filter='none';
+    return c;
+  }
+
+  // ---------- three ----------
+  const canvas = document.getElementById('c');
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setClearColor(0x06080a,1);
+
+  const scene = new THREE.Scene();
+  const rtScene = new THREE.Scene();          // holds only the virtual (fixed) plane
+  const camera = new THREE.PerspectiveCamera(38, 16/10, 0.05, 5);
+  const target = new THREE.Vector3(0, 0.09, -0.03);
+
+  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a2118, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(0.3,0.8,0.5); scene.add(sun);
+
+  // desk
+  const desk = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.MeshStandardMaterial({color:0x151a20, roughness:1}));
+  desk.rotation.x = -Math.PI/2; desk.position.y = -0.006; scene.add(desk);
+
+  const alu = new THREE.MeshStandardMaterial({color:0x8e959c, metalness:0.6, roughness:0.45});
+  const dark = new THREE.MeshStandardMaterial({color:0x14171a, roughness:0.8});
+
+  // base
+  const base = new THREE.Mesh(new THREE.BoxGeometry(W, 0.012, D), alu); base.position.y = 0; scene.add(base);
+  const keys = new THREE.Mesh(new THREE.BoxGeometry(W*0.86, 0.002, D*0.5), dark); keys.position.set(0,0.0065,-0.02); scene.add(keys);
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(W*0.42, 0.002, D*0.28), new THREE.MeshStandardMaterial({color:0x7c848b,roughness:.6})); pad.position.set(0,0.0065,0.065); scene.add(pad);
+
+  // lid group pivoting at hinge
+  const lid = new THREE.Group(); lid.position.set(0, 0.006, HINGE_Z); scene.add(lid);
+  const lidBody = new THREE.Mesh(new THREE.BoxGeometry(W, 0.005, LID_H), alu); lidBody.position.set(0,0.003,LID_H/2); lid.add(lidBody);
+
+  // screen geometry: lies in local xz, faces local -y (down when closed)
+  function screenGeom(){ const g = new THREE.PlaneGeometry(W*0.94, LID_H*0.90); g.rotateX(Math.PI/2); g.translate(0,-0.0001,LID_H/2+0.004); return g; }
+
+  // textures
+  let texSharp, texBlur;
+  function setSource(img){
+    const c = document.createElement('canvas'); c.width=1440; c.height=900;
+    const g=c.getContext('2d'); g.fillStyle='#000'; g.fillRect(0,0,1440,900);
+    const s=Math.min(1440/img.width, 900/img.height), w=img.width*s, h=img.height*s; g.drawImage(img,(1440-w)/2,(900-h)/2,w,h);
+    if(texSharp) texSharp.dispose(); if(texBlur) texBlur.dispose();
+    texSharp = new THREE.CanvasTexture(c); texBlur = new THREE.CanvasTexture(blurCanvas(c,14));
+    texSharp.minFilter = texBlur.minFilter = THREE.LinearFilter;
+    virtSharp.material.map = texSharp; virtBlur.material.map = texBlur;
+    virtSharp.material.needsUpdate = virtBlur.material.needsUpdate = true;
+  }
+
+  // virtual plane at THETA_OPEN, rendered to targets from the eye camera
+  const virtGroup = new THREE.Group(); virtGroup.position.copy(lid.position); virtGroup.rotation.x = -THREE.MathUtils.degToRad(THETA_OPEN);
+  const virtSharp = new THREE.Mesh(screenGeom(), new THREE.MeshBasicMaterial({color:0xffffff}));
+  const virtBlur  = new THREE.Mesh(screenGeom(), new THREE.MeshBasicMaterial({color:0xffffff}));
+  virtGroup.add(virtSharp); rtScene.add(virtGroup);
+  const virtGroupB = virtGroup.clone(false); virtGroupB.add(virtBlur); rtScene.add(virtGroupB);
+  virtSharp.layers.set(1); virtBlur.layers.set(2);
+
+  // ghost outline in main scene
+  const ghost = new THREE.LineSegments(new THREE.EdgesGeometry(screenGeom()), new THREE.LineBasicMaterial({color:0xff8a4c, transparent:true, opacity:0.9}));
+  const ghostGroup = new THREE.Group(); ghostGroup.position.copy(lid.position); ghostGroup.rotation.x = virtGroup.rotation.x; ghostGroup.add(ghost); ghostGroup.visible=false; scene.add(ghostGroup);
+
+  let rtA = new THREE.WebGLRenderTarget(2,2), rtB = new THREE.WebGLRenderTarget(2,2);
+
+  // screen shader: mode 0 = painted on lid (naive), mode 1 = projective (compensated)
+  const screenMat = new THREE.ShaderMaterial({
+    uniforms:{ tSharp:{value:null}, tBlur:{value:null}, blurMix:{value:0}, dim:{value:1}, mode:{value:1},
+               uProj:{value:new THREE.Matrix4()}, uView:{value:new THREE.Matrix4()} },
+    vertexShader:`
+      uniform mat4 uProj, uView; varying vec2 vUv; varying vec4 vProj;
+      void main(){ vUv = uv; vec4 wp = modelMatrix*vec4(position,1.0); vProj = uProj*uView*wp; gl_Position = projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader:`
+      uniform sampler2D tSharp, tBlur; uniform float blurMix, dim; uniform int mode; varying vec2 vUv; varying vec4 vProj;
+      void main(){
+        vec2 uv = vUv; float inside = 1.0;
+        if(mode==1){ vec3 n = vProj.xyz/vProj.w; uv = n.xy*0.5+0.5; if(vProj.w<0.0||uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) inside=0.0; }
+        vec4 s = texture2D(tSharp,uv), b = texture2D(tBlur,uv);
+        vec4 c = mix(s,b,blurMix);
+        vec3 rgb = mix(vec3(0.01), c.rgb, c.a*inside) * dim;
+        gl_FragColor = vec4(rgb,1.0);
+      }`
+  });
+  const screen = new THREE.Mesh(screenGeom(), screenMat); lid.add(screen);
+
+  // ---------- sizing ----------
+  function resize(){
+    const r = canvas.getBoundingClientRect(); const w=Math.max(2,Math.round(r.width)), h=Math.max(2,Math.round(r.height));
+    renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix();
+    const pr = renderer.getPixelRatio(); rtA.setSize(w*pr,h*pr); rtB.setSize(w*pr,h*pr);
+  }
+  new ResizeObserver(resize).observe(canvas.parentElement);
+
+  // ---------- camera (eye) ----------
+  function placeEye(){
+    const az = THREE.MathUtils.degToRad(st.az), el = THREE.MathUtils.degToRad(st.el);
+    camera.position.set(target.x + st.dist*Math.cos(el)*Math.sin(az), target.y + st.dist*Math.sin(el), target.z + st.dist*Math.cos(el)*Math.cos(az));
+    camera.lookAt(target); camera.updateMatrixWorld();
+  }
+  let drag=null;
+  canvas.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,az:st.az,el:st.el}; canvas.setPointerCapture(e.pointerId);});
+  canvas.addEventListener('pointermove',e=>{ if(!drag) return; st.az = THREE.MathUtils.clamp(drag.az - (e.clientX-drag.x)*0.3, -70, 70); st.el = THREE.MathUtils.clamp(drag.el + (e.clientY-drag.y)*0.3, 4, 85); });
+  canvas.addEventListener('pointerup',()=>drag=null); canvas.addEventListener('pointercancel',()=>drag=null);
+  canvas.addEventListener('wheel',e=>{ e.preventDefault(); st.playing=null; setTheta(st.theta - Math.sign(e.deltaY)*2); },{passive:false});
+
+  // ---------- controls ----------
+  const $ = id=>document.getElementById(id);
+  const thetaEl=$('theta'), thetaVal=$('thetaVal');
+  function setTheta(v){ st.theta = THREE.MathUtils.clamp(v,0,120); thetaEl.value = st.theta; thetaVal.textContent = st.theta.toFixed(0)+'°'; }
+  thetaEl.addEventListener('input',()=>{ st.playing=null; setTheta(parseFloat(thetaEl.value)); });
+  $('comp').addEventListener('change',e=>st.comp=e.target.checked);
+  $('blur').addEventListener('change',e=>st.blur=e.target.checked);
+  $('ghost').addEventListener('change',e=>{st.ghost=e.target.checked; ghostGroup.visible=st.ghost;});
+  $('btnEye').addEventListener('click',()=>{st.az=0; st.el=36;});
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function play(from,to,ms){ st.playing = {from,to,t0:performance.now(),ms: reduced? 0 : ms}; }
+  $('btnClose').addEventListener('click',()=>play(st.theta, 0, 900*Math.max(0.2, st.theta/THETA_OPEN)));
+  $('btnOpen').addEventListener('click',()=>play(st.theta, THETA_OPEN, 800));
+  $('shot').addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const img=new Image(); img.onload=()=>{setSource(img); URL.revokeObjectURL(img.src);}; img.src=URL.createObjectURL(f); });
+
+  // ---------- loop ----------
+  const hudTheta=$('hudTheta'), hudP=$('hudP'), hudVel=$('hudVel'), hudState=$('hudState');
+  const easeInOut = t=> t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+  let lastT = performance.now();
+  function frame(now){
+    const dt = Math.max(1e-3,(now-lastT)/1000); lastT=now;
+    if(st.playing){ const p=st.playing, k=p.ms? Math.min(1,(now-p.t0)/p.ms):1; setTheta(p.from+(p.to-p.from)*easeInOut(k)); if(k>=1) st.playing=null; }
+    const v = (st.theta - st.lastTheta)/dt; st.vel = st.vel*0.7 + v*0.3; st.lastTheta = st.theta;
+
+    const p = THREE.MathUtils.clamp((THETA_OPEN-st.theta)/(THETA_OPEN-THETA_OFF),0,1);
+    const sm=(a,b,x)=>{x=THREE.MathUtils.clamp((x-a)/(b-a),0,1);return x*x*(3-2*x);};
+    const blurMix = st.blur? sm(0.35,0.85,p):0, dim = st.blur? 1-0.7*sm(0.5,1,p):1;
+    const off = st.theta <= THETA_OFF;
+
+    lid.rotation.x = -THREE.MathUtils.degToRad(st.theta);
+    placeEye();
+
+    if(st.comp){
+      camera.layers.set(1); renderer.setRenderTarget(rtA); renderer.setClearColor(0x000000,0); renderer.clear(); renderer.render(rtScene,camera);
+      camera.layers.set(2); renderer.setRenderTarget(rtB); renderer.clear(); renderer.render(rtScene,camera);
+      camera.layers.set(0); renderer.setRenderTarget(null); renderer.setClearColor(0x06080a,1);
+      screenMat.uniforms.mode.value=1; screenMat.uniforms.tSharp.value=rtA.texture; screenMat.uniforms.tBlur.value=rtB.texture;
+      screenMat.uniforms.uProj.value.copy(camera.projectionMatrix); screenMat.uniforms.uView.value.copy(camera.matrixWorldInverse);
+    } else {
+      screenMat.uniforms.mode.value=0; screenMat.uniforms.tSharp.value=texSharp; screenMat.uniforms.tBlur.value=texBlur;
+    }
+    screenMat.uniforms.blurMix.value = blurMix; screenMat.uniforms.dim.value = off?0:dim;
+    renderer.render(scene,camera);
+
+    hudTheta.textContent = st.theta.toFixed(1)+'°'; hudP.textContent = p.toFixed(2); hudVel.textContent = Math.round(st.vel);
+    hudState.textContent = off ? '已關螢幕' : st.vel < -3 ? '闔上中' : st.vel > 3 ? '打開中' : '靜止';
+    requestAnimationFrame(frame);
+  }
+
+  setSource(drawDesktop());
+  resize(); placeEye();
+  requestAnimationFrame(frame);
+})();
+</script>
