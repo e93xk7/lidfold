@@ -17,10 +17,7 @@ let package = Package(
             dependencies: ["LidFoldCore"],
             path: "Sources/lidfold-cli"
         ),
-        .testTarget(
-            name: "LidFoldCoreTests",
-            dependencies: ["LidFoldCore"],
-            path: "Tests/LidFoldCoreTests"
-        ),
+        // M2 的 CSV 回放測試會是一個執行檔，不是 XCTest target：
+        // 這台機器只裝了 Command Line Tools，沒有完整 Xcode，`swift test` 找不到 XCTest。
     ]
 )

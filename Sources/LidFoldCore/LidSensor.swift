@@ -5,10 +5,14 @@ import IOKit.hid
 public struct LidAngleSample {
     /// 秒，單調時鐘（`ProcessInfo.systemUptime`），只拿來算 dθ/dt。
     public let timestamp: Double
-    /// 感測器原始 16-bit 值。
-    public let raw: UInt16
-    /// 角度，單位度。0 = 完全闔上。
+    /// 角度，單位度，解析度 0.01°（report 7）。0 = 完全闔上。平常用這個。
     public let theta: Double
+    /// 角度，單位度，解析度 1°（report 1）。只拿來對照／備援。
+    public let thetaCoarse: Double
+    /// report 7 的原始整數，單位 0.01°。
+    public let rawFine: UInt32
+    /// report 1 的原始整數，單位 1°。
+    public let rawCoarse: UInt16
 }
 
 public enum LidSensorError: Error, CustomStringConvertible {
@@ -37,23 +41,35 @@ public enum LidSensorError: Error, CustomStringConvertible {
 
 /// Sensor 層：用 IOKit HID 讀 MacBook 內建上蓋角度感測器。
 ///
-/// 讀法採 (b)：`IOHIDDeviceGetReport` 讀 feature report ID 1，再由呼叫端輪詢。
-/// 出處：`samhenrigold/LidAngleSensor` (`LidAngleSensor.m`)、
-/// `wangfu91/lid-angle-rs` (`src/lib.rs`)、`tcsenpai/pybooklid` (`pybooklid.py`)。
-/// 三者都是讀 report 1，取 bytes[1..2] 做 little-endian UInt16。
+/// 讀法採 (b)：`IOHIDDeviceGetReport` 讀 report，再由呼叫端輪詢。
+/// 參考實作（`samhenrigold/LidAngleSensor`、`wangfu91/lid-angle-rs`、
+/// `tcsenpai/pybooklid`）都只讀 report 1。
+///
+/// M1 讀 HID report descriptor 發現還有一個 **report 7**：32-bit、logical max 36000、
+/// unit exponent 10⁻²，也就是同一個角度但解析度 0.01°（實測 report 1 = 117° 時
+/// report 7 = 116.89–116.94°）。本專案以 report 7 為主、report 1 為備援。
+///
+/// 兩個 report 都由同一顆感測器驅動，**每 100 ms 更新一次（10 Hz）**。
+/// 實測註冊 input report callback 的推送速率一樣是 10 Hz，所以換讀法救不了更新率，
+/// 動畫要自己做預測／插值（M3）。
 public final class LidSensor {
     public static let vendorID = 0x05AC
     public static let productID = 0x8104
     public static let usagePage = 0x0020   // Sensor
     public static let usage = 0x008A       // Orientation
 
-    /// 原始值 → 度 的換算。M0 實測：上蓋開到約 110° 時原始值也約 110，所以是 1 raw = 1°。
-    /// （白皮書 3.1 寫 0.01°，與實測不符，以實測為準。）
-    public static let degreesPerRawUnit: Double = 1.0
+    /// 感測器自己的更新週期，實測 100 ms。
+    public static let sensorUpdateInterval: Double = 0.1
+
+    private static let coarseReportID = 1   // 9-bit，1°
+    private static let fineReportID = 7     // 32-bit，0.01°
 
     private let manager: IOHIDManager
     private let device: IOHIDDevice
-    private var reportBuffer = [UInt8](repeating: 0, count: 8)
+    private var coarseBuffer = [UInt8](repeating: 0, count: 8)
+    private var fineBuffer = [UInt8](repeating: 0, count: 8)
+    /// report 7 讀不到時（別的機型可能沒有）就只用 report 1。
+    private var fineAvailable = true
 
     public init() throws {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -80,22 +96,45 @@ public final class LidSensor {
 
     /// 讀一次目前角度。同步、阻塞（實測 < 1 ms）。
     public func read() throws -> LidAngleSample {
-        var length = CFIndex(reportBuffer.count)
-        let r = reportBuffer.withUnsafeMutableBufferPointer { buf in
-            IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, 1, buf.baseAddress!, &length)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+
+        let coarseLen = try getReport(Self.coarseReportID, into: &coarseBuffer)
+        guard coarseLen >= 3 else { throw LidSensorError.shortReport(coarseLen) }
+        let rawCoarse = UInt16(coarseBuffer[1]) | (UInt16(coarseBuffer[2]) << 8)
+        let thetaCoarse = Double(rawCoarse)
+
+        var rawFine = UInt32(rawCoarse) * 100
+        if fineAvailable {
+            if let len = try? getReport(Self.fineReportID, into: &fineBuffer), len >= 5 {
+                rawFine = UInt32(fineBuffer[1]) | (UInt32(fineBuffer[2]) << 8)
+                    | (UInt32(fineBuffer[3]) << 16) | (UInt32(fineBuffer[4]) << 24)
+            } else {
+                fineAvailable = false
+            }
         }
-        guard r == kIOReturnSuccess else { throw LidSensorError.reportFailed(r) }
-        guard length >= 3 else { throw LidSensorError.shortReport(Int(length)) }
-        let raw = UInt16(reportBuffer[1]) | (UInt16(reportBuffer[2]) << 8)
+
         return LidAngleSample(
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            raw: raw,
-            theta: Double(raw) * Self.degreesPerRawUnit
+            timestamp: timestamp,
+            theta: Double(rawFine) / 100.0,
+            thetaCoarse: thetaCoarse,
+            rawFine: rawFine,
+            rawCoarse: rawCoarse
         )
     }
 
-    /// 除錯用：整段 feature report 的 hex。
+    private func getReport(_ id: Int, into buffer: inout [UInt8]) throws -> Int {
+        var length = CFIndex(buffer.count)
+        let r = buffer.withUnsafeMutableBufferPointer { buf in
+            IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, id, buf.baseAddress!, &length)
+        }
+        guard r == kIOReturnSuccess else { throw LidSensorError.reportFailed(r) }
+        return Int(length)
+    }
+
+    /// 除錯用：兩個 report 的 hex。
     public func rawReportHex() -> String {
-        reportBuffer.map { String(format: "%02X", $0) }.joined(separator: " ")
+        let c = coarseBuffer.prefix(3).map { String(format: "%02X", $0) }.joined(separator: " ")
+        let f = fineBuffer.prefix(5).map { String(format: "%02X", $0) }.joined(separator: " ")
+        return "r1[\(c)] r7[\(f)]"
     }
 }
