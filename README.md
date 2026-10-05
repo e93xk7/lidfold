@@ -10,7 +10,7 @@
 |---|---|
 | M0 確認感測器 | ✅ 2026-09-16 |
 | M1 角度串流 CSV + θ–t 圖 | ✅ 2026-10-04 |
-| M2 狀態機 | — |
+| M2 狀態機 | 程式完成，待驗「闔到一半停住」 |
 | M3 覆蓋窗 + 快照 + 3D 投影 | — |
 | M4 模糊、變暗、映射曲線 | — |
 | M5 選單列 app | — |
@@ -22,6 +22,7 @@
 swift build
 .build/debug/lidfold-cli                       # 每 50 ms 印一次角度
 .build/debug/lidfold-cli --raw                 # 額外印出兩個 report 的 hex
+.build/debug/lidfold-replay data/takes/*.csv   # 回放錄下的闔蓋，檢查狀態機（取代 XCTest）
 scripts/record.sh normal_1                     # 錄一次闔蓋 → data/normal_1.csv
 .venv/bin/python scripts/split_takes.py data/x.csv   # 一檔多次闔蓋時切開
 .venv/bin/python scripts/plot_theta.py data/takes/*.csv

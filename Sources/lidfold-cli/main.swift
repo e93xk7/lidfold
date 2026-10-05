@@ -5,10 +5,10 @@ import LidFoldCore
 // M0–M2 的命令列工具。
 //
 // 用法：
-//   lidfold-cli                              每 50 ms 印一次角度（M0）
-//   lidfold-cli --raw                        額外印出整段 feature report 的 hex
-//   lidfold-cli --csv data/close_normal_1.csv  錄 CSV（M1），預設 200 Hz
-//   lidfold-cli --csv <path> --hz 100        自訂取樣率
+//   lidfold-cli                      即時顯示 θ、插值後的 θ、ω、狀態、p
+//   lidfold-cli --csv data/x.csv     同上，另外把每一筆寫成 CSV（M1 錄製）
+//   lidfold-cli --raw                加印兩個 HID report 的 hex（M0 除錯）
+//   lidfold-cli --hz 120             自訂輪詢率（預設依狀態自動在 5–120 Hz 之間切）
 //
 // CSV 欄位：t_mono,t_wall,raw,theta,theta_coarse,display_asleep
 //   t_mono          單調時鐘秒數，睡眠期間不前進 → 用來算 dθ/dt
@@ -23,10 +23,9 @@ func fail(_ msg: String) -> Never {
     exit(2)
 }
 
-var intervalMs = 50
+var fixedIntervalMs: Int?
 var showRaw = false
 var csvPath: String?
-var hzGiven = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
@@ -34,12 +33,11 @@ while !args.isEmpty {
     switch a {
     case "--interval-ms":
         guard let v = args.first.flatMap(Int.init), v > 0 else { fail("--interval-ms 需要正整數") }
-        intervalMs = v
+        fixedIntervalMs = v
         args.removeFirst()
     case "--hz":
         guard let v = args.first.flatMap(Double.init), v > 0 else { fail("--hz 需要正數") }
-        intervalMs = max(1, Int((1000.0 / v).rounded()))
-        hzGiven = true
+        fixedIntervalMs = max(1, Int((1000.0 / v).rounded()))
         args.removeFirst()
     case "--csv":
         guard let v = args.first, !v.hasPrefix("--") else { fail("--csv 需要檔案路徑") }
@@ -51,8 +49,6 @@ while !args.isEmpty {
         fail("不認得的參數：\(a)")
     }
 }
-// 錄 CSV 時預設 200 Hz：要先量到感測器自己的更新率，得比它快。
-if csvPath != nil && !hzGiven { intervalMs = 5 }
 
 let sensor: LidSensor
 do {
@@ -66,11 +62,9 @@ func builtInDisplayAsleep() -> Bool {
     CGDisplayIsAsleep(CGMainDisplayID()) != 0
 }
 
-let t0mono = ProcessInfo.processInfo.systemUptime
-let t0wall = Date().timeIntervalSince1970
-
+// CSV：闔蓋時機器會睡著、行程被凍住，所以每一行都立刻寫進檔案，不進緩衝區。
+var csv: FileHandle?
 if let path = csvPath {
-    // ── M1：錄 CSV ─────────────────────────────────────────────
     let url = URL(fileURLWithPath: path)
     try? FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -79,53 +73,70 @@ if let path = csvPath {
         fail("寫不了檔案：\(url.path)")
     }
     out.write("t_mono,t_wall,raw,theta,theta_coarse,display_asleep\n".data(using: .utf8)!)
-
-    // 闔蓋時機器會睡著、行程被凍住，所以每一行都立刻寫進檔案，不進緩衝區。
-    let handle = out
-    for sig in [SIGINT, SIGTERM] {
-        signal(sig) { _ in exit(0) }
-    }
-
+    csv = out
     FileHandle.standardError.write(
-        "錄製中 → \(url.path)（\(1000 / intervalMs) Hz）。闔蓋、等螢幕黑、再打開，然後按 Ctrl-C。\n"
-            .data(using: .utf8)!)
+        "錄製中 → \(url.path)。先別碰上蓋停兩秒，再闔蓋；打開後按 Ctrl-C。\n".data(using: .utf8)!)
+}
 
-    var lastPrint = 0.0
-    while true {
-        if let s = try? sensor.read() {
-            let tMono = s.timestamp - t0mono
-            let tWall = Date().timeIntervalSince1970 - t0wall
-            let asleep = builtInDisplayAsleep() ? 1 : 0
-            let line = String(
-                format: "%.4f,%.4f,%d,%.2f,%.0f,%d\n",
-                tMono, tWall, Int(s.rawFine), s.theta, s.thetaCoarse, asleep)
-            handle.write(line.data(using: .utf8)!)
+signal(SIGINT) { _ in print(""); exit(0) }
+signal(SIGTERM) { _ in exit(0) }
 
-            if tMono - lastPrint > 0.1 {
-                lastPrint = tMono
-                let status = asleep == 1 ? "螢幕已關" : "螢幕亮著"
-                FileHandle.standardError.write(
-                    String(format: "\r  t=%6.2f s   θ=%6.2f°   %@   ", tMono, s.theta, status)
-                        .data(using: .utf8)!)
-            }
-        }
-        usleep(useconds_t(intervalMs * 1000))
+let signalChain = LidSignal()
+let machine = LidStateMachine()
+let predictor = AnglePredictor()
+
+let t0mono = ProcessInfo.processInfo.systemUptime
+let t0wall = Date().timeIntervalSince1970
+var lastPrint = 0.0
+var lastMotion = t0mono
+
+print("θ = 感測器讀值（10 Hz）｜θ̂ = 插值後（給 60 fps 用）｜ω = 角速度｜p = 動畫進度")
+
+while true {
+    let now = ProcessInfo.processInfo.systemUptime
+    guard let sample = try? sensor.read() else {
+        usleep(20000)
+        continue
     }
-} else {
-    // ── M0：印到螢幕 ───────────────────────────────────────────
-    signal(SIGINT) { _ in exit(0) }
-    print("# t[s]  raw  θ[°]" + (showRaw ? "  report" : ""))
-    while true {
-        do {
-            let s = try sensor.read()
-            var line = String(
-                format: "%8.3f  %6d  %7.2f", s.timestamp - t0mono, Int(s.rawFine), s.theta)
-            if showRaw { line += "  " + sensor.rawReportHex() }
-            print(line)
-        } catch {
-            print("讀取失敗：\(error)")
-        }
-        fflush(stdout)
-        usleep(useconds_t(intervalMs * 1000))
+    let out = signalChain.ingest(sample)
+    let events = machine.step(theta: out.theta, omega: out.omega, now: sample.timestamp,
+                              isNewUpdate: out.isNewUpdate)
+    let theta = predictor.angle(now: sample.timestamp,
+                                lastUpdate: signalChain.lastUpdate, omega: out.omega)
+    let p = machine.thetaOpen.map { Mapping.progress(theta: theta, thetaOpen: $0) } ?? 0
+
+    if let csv {
+        let line = String(
+            format: "%.4f,%.4f,%d,%.2f,%.0f,%d\n",
+            sample.timestamp - t0mono, Date().timeIntervalSince1970 - t0wall,
+            Int(sample.rawFine), sample.theta, sample.thetaCoarse,
+            builtInDisplayAsleep() ? 1 : 0)
+        csv.write(line.data(using: .utf8)!)
     }
+
+    // 狀態轉移各自印一行，才不會被即時那行蓋掉。
+    for e in events {
+        print(String(format: "\r  t=%6.2f s  θ=%6.2f°  %@ → %@",
+                     sample.timestamp - t0mono, out.theta, e.rawValue, machine.state.rawValue))
+    }
+
+    if abs(out.omega) >= Tuning.omegaDeadZone { lastMotion = now }
+
+    if now - lastPrint > 0.05 {
+        lastPrint = now
+        var line = String(format: "\r  θ=%7.2f°  θ̂=%7.2f°  ω=%+7.1f °/s  %@  p=%.2f",
+                          out.theta, theta, out.omega, machine.state.rawValue, p)
+        if showRaw { line += "  " + sensor.rawReportHex() }
+        FileHandle.standardError.write((line + "   ").data(using: .utf8)!)
+    }
+
+    // 輪詢率：靜止時 5 Hz 省電，動起來拉到 120 Hz（白皮書 5.1）。
+    let interval: Int
+    if let fixed = fixedIntervalMs {
+        interval = fixed
+    } else {
+        let idle = now - lastMotion > Tuning.idleAfter
+        interval = Int(1000.0 / (idle ? Tuning.idlePollHz : Tuning.activePollHz))
+    }
+    usleep(useconds_t(interval * 1000))
 }

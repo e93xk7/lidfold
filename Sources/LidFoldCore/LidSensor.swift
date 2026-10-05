@@ -13,6 +13,15 @@ public struct LidAngleSample {
     public let rawFine: UInt32
     /// report 1 的原始整數，單位 1°。
     public let rawCoarse: UInt16
+
+    public init(timestamp: Double, theta: Double, thetaCoarse: Double,
+                rawFine: UInt32, rawCoarse: UInt16) {
+        self.timestamp = timestamp
+        self.theta = theta
+        self.thetaCoarse = thetaCoarse
+        self.rawFine = rawFine
+        self.rawCoarse = rawCoarse
+    }
 }
 
 public enum LidSensorError: Error, CustomStringConvertible {
@@ -70,6 +79,8 @@ public final class LidSensor {
     private var fineBuffer = [UInt8](repeating: 0, count: 8)
     /// report 7 讀不到時（別的機型可能沒有）就只用 report 1。
     private var fineAvailable = true
+    /// 兩個 report 兜不起來的次數，除錯用。
+    public private(set) var disagreements = 0
 
     public init() throws {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -106,8 +117,14 @@ public final class LidSensor {
         var rawFine = UInt32(rawCoarse) * 100
         if fineAvailable {
             if let len = try? getReport(Self.fineReportID, into: &fineBuffer), len >= 5 {
-                rawFine = UInt32(fineBuffer[1]) | (UInt32(fineBuffer[2]) << 8)
+                let fine = UInt32(fineBuffer[1]) | (UInt32(fineBuffer[2]) << 8)
                     | (UInt32(fineBuffer[3]) << 16) | (UInt32(fineBuffer[4]) << 24)
+                // 兩個 report 來自同一顆感測器，差太多就是這次讀壞了，退回 report 1。
+                if abs(Double(fine) / 100.0 - thetaCoarse) <= Tuning.reportDisagreement {
+                    rawFine = fine
+                } else {
+                    disagreements += 1
+                }
             } else {
                 fineAvailable = false
             }
