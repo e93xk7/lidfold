@@ -89,6 +89,61 @@ let expectations: [String: Expectation] = [
 
 // MARK: - 主程式
 
+/// 幾何自檢：虛擬平面上的一點，不管上蓋轉到哪個角度，
+/// 投影到螢幕再反推回世界座標，都應該落在同一個位置。
+/// 這是 M3 唯一能在「用眼睛看」之前驗的東西。
+func checkGeometry() -> Bool {
+    let thetaOpen = 113.0
+    let pixelsPerCm = 1.0   // 用公分當單位，驗算不需要換成點
+    let probe = (x: 0.0, y: 10.0)
+    var reference: (x: Double, y: Double, z: Double)?
+    var worst = 0.0
+
+    print("── 幾何自檢（虛擬平面上的一點 (0, 10 cm)）")
+    print("    θ      畫在螢幕上的位置      反推的世界座標")
+    for theta in stride(from: thetaOpen, through: 30.0, by: -13.0) {
+        // 視距被夾住之後幾何本來就不準了（眼睛快落在螢幕平面上，透視會發散）。
+        // 那段交給 M4 的模糊變暗蓋掉，不列入檢查。
+        guard Projection.isVisible(theta: theta, eye: Projection.Eye()) else {
+            print(String(format: "  %5.1f°   視距已不足，幾何夾住（交給 M4 蓋掉）", theta))
+            continue
+        }
+        let m = Projection.transform(theta: theta, thetaOpen: thetaOpen,
+                                     pixelsPerCm: pixelsPerCm)
+        // 圖層上的點 (probe) 經過變換後落在螢幕的哪裡。
+        let w = probe.x * m.m14 + probe.y * m.m24 + m.m44
+        guard abs(w) > 1e-9 else { continue }
+        let sx = (probe.x * m.m11 + probe.y * m.m21 + m.m41) / w
+        let sy = (probe.x * m.m12 + probe.y * m.m22 + m.m42) / w
+
+        guard let world = Projection.worldPointSeen(screenPoint: (sx, sy),
+                                                    theta: theta, thetaOpen: thetaOpen) else {
+            print(String(format: "  %5.1f°   (%6.2f, %6.2f)   看不到", theta, sx, sy))
+            continue
+        }
+        if reference == nil { reference = world }
+        let r = reference!
+        let err = ((world.x - r.x) * (world.x - r.x) + (world.y - r.y) * (world.y - r.y)
+                   + (world.z - r.z) * (world.z - r.z)).squareRoot()
+        worst = max(worst, err)
+        print(String(format: "  %5.1f°   (%6.2f, %6.2f)   (%6.2f, %6.2f, %6.2f)  偏移 %.4f cm",
+                     theta, sx, sy, world.x, world.y, world.z, err))
+    }
+    // 錯覺能撐到幾度：視距掉到下限的那個角度。
+    var limit = 0.0
+    for theta in stride(from: thetaOpen, through: 0.0, by: -0.1)
+    where Projection.isVisible(theta: theta, eye: Projection.Eye()) {
+        limit = theta
+    }
+
+    let ok = worst < 0.01
+    print(ok ? String(format: "✓ 幾何：可見範圍內最大偏移 %.5f cm", worst)
+             : String(format: "✗ 幾何：最大偏移 %.3f cm，內容會跟著上蓋跑", worst))
+    print(String(format: "  錯覺的角度窗口：%.0f° → %.0f°（再闔下去視距不足，M4 要在這裡接手）",
+                 thetaOpen, limit))
+    return ok
+}
+
 var trace = false
 var predictDir: String?
 var paths: [String] = []
@@ -97,6 +152,8 @@ while !pending.isEmpty {
     let a = pending.removeFirst()
     if a == "--trace" {
         trace = true
+    } else if a == "--geometry" {
+        exit(checkGeometry() ? 0 : 1)
     } else if a == "--predict" {
         predictDir = pending.isEmpty ? "data/predict" : pending.removeFirst()
     } else {

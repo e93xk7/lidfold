@@ -75,6 +75,27 @@ public enum Tuning {
     /// 60 ms 約是感測器週期的一半：一次更新內收斂得完，又壓得住跳階。
     public static let smoothingTimeConstant: Double = 0.06
 
+    // MARK: - Render 層的幾何
+
+    /// 眼睛在轉軸正前方多遠，單位公分。白皮書給的預設值，M3 用眼睛調。
+    public static let eyeForwardCm: Double = 45
+
+    /// 眼睛在轉軸上方多高，單位公分。同上。
+    public static let eyeUpCm: Double = 30
+
+    /// 轉軸到顯示區下緣的距離（下邊框），單位公分。M3 量機器實體。
+    public static let bezelBottomCm: Double = 1.0
+
+    /// 覆蓋窗最多顯示這麼久就強制關掉，單位秒。
+    ///
+    /// 安全網：覆蓋窗蓋滿整個螢幕，萬一狀態機漏掉收掉的時機（例如感測器卡住），
+    /// 畫面會一直被一張舊快照蓋住。M1 實測最慢的一次闔蓋是 8.6 秒，所以 12 秒夠寬。
+    public static let maxOverlaySeconds: Double = 12
+
+    /// 視距（眼睛到螢幕平面的垂直距離）夾在這個下限，單位公分。
+    /// 上蓋闔到一定程度後眼睛會落到螢幕平面上，透視投影在那裡會發散。
+    public static let minEyeDistanceCm: Double = 8
+
     // MARK: - 感測器
 
     /// 輪詢頻率：靜止時省電，動起來後拉高（白皮書 5.1）。

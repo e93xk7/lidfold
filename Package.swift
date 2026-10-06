@@ -17,6 +17,12 @@ let package = Package(
             dependencies: ["LidFoldCore"],
             path: "Sources/lidfold-cli"
         ),
+        // M3 起的 app：Render + Capture + App 層
+        .executableTarget(
+            name: "LidFoldApp",
+            dependencies: ["LidFoldCore"],
+            path: "Sources/LidFoldApp"
+        ),
         // CSV 回放測試。做成執行檔而不是 XCTest target：
         // 這台機器只裝了 Command Line Tools，沒有完整 Xcode，`swift test` 找不到 XCTest。
         .executableTarget(

@@ -11,7 +11,7 @@
 | M0 確認感測器 | ✅ 2026-09-16 |
 | M1 角度串流 CSV + θ–t 圖 | ✅ 2026-10-04 |
 | M2 狀態機 | ✅ 2026-10-06 |
-| M3 覆蓋窗 + 快照 + 3D 投影 | — |
+| M3 覆蓋窗 + 快照 + 3D 投影 | 程式完成，待 Ian 用眼睛判 |
 | M4 模糊、變暗、映射曲線 | — |
 | M5 選單列 app | — |
 | M6 公開 | — |
@@ -24,6 +24,10 @@ swift build
 .build/debug/lidfold-cli --raw                 # 額外印出兩個 report 的 hex
 .build/debug/lidfold-replay data/takes/*.csv   # 回放錄下的闔蓋，檢查狀態機（取代 XCTest）
 scripts/record.sh normal_1                     # 錄一次闔蓋 → data/normal_1.csv
+.build/debug/lidfold-replay --geometry         # 投影幾何自檢
+scripts/make_cert.sh                           # 建自簽憑證（只跑一次，會問密碼）
+scripts/build_app.sh                           # 打包 build/LidFold.app 並簽章
+open build/LidFold.app                          # 跑起來；--demo 不碰上蓋也能看渲染
 .venv/bin/python scripts/split_takes.py data/x.csv   # 一檔多次闔蓋時切開
 .venv/bin/python scripts/plot_theta.py data/takes/*.csv
 ```
@@ -47,7 +51,7 @@ scripts/record.sh normal_1                     # 錄一次闔蓋 → data/normal
 ```
 Sources/LidFoldCore/     Sensor + Signal + Mapping（純邏輯，不 import AppKit）
 Sources/lidfold-cli/     M0–M2 的命令列工具
-Sources/LidFoldApp/      M3 起的 app
+Sources/LidFoldApp/      M3 起的 app（Render + Capture + App）
 scripts/                 錄製、切割、畫圖
 data/                    M1 的 CSV 與圖（見 data/README.md）
 docs/                    白皮書、模擬器
