@@ -92,7 +92,7 @@ final class OverlayController {
         watchdog = Timer.scheduledTimer(withTimeInterval: Tuning.maxOverlaySeconds,
                                         repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                NSLog("LidFold：覆蓋窗超過 \(Tuning.maxOverlaySeconds) 秒還沒收，強制關掉")
+                Log.write("覆蓋窗超過 \(Tuning.maxOverlaySeconds) 秒還沒收，強制關掉")
                 self?.hide()
             }
         }

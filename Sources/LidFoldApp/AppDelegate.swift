@@ -32,14 +32,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if !ScreenCapture.hasPermission() {
-            NSLog("LidFold：還沒有螢幕錄製權限，正在請求…")
+            Log.write("還沒有螢幕錄製權限，正在請求…")
             ScreenCapture.requestPermission()
         }
+        // 闔蓋只有 0.8 秒，拍照的冷啟動要先付掉。
+        Task { await ScreenCapture.prewarm() }
 
         do {
             sensor = try LidSensor()
         } catch {
-            NSLog("LidFold：感測器打不開 — \(error)")
+            Log.write("感測器打不開 — \(error)")
             if !demoMode { NSApp.terminate(nil) }
         }
 
@@ -81,15 +83,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func captureAndShow() {
         guard !capturing, let thetaOpen = machine.thetaOpen else { return }
         capturing = true
+        let t0 = ProcessInfo.processInfo.systemUptime
+        Log.write(String(format: "didStartClosing，θ_open=%.1f°，開始拍快照", thetaOpen))
         Task { @MainActor in
             defer { capturing = false }
             do {
                 let image = try await ScreenCapture.captureBuiltIn()
+                let ms = (ProcessInfo.processInfo.systemUptime - t0) * 1000
                 // 拍照是非同步的，拍回來時上蓋可能已經停了或打開了，那就不要顯示。
-                guard machine.state == .closing else { return }
+                guard machine.state == .closing else {
+                    Log.write(String(format: "快照 %.0f ms 拍回來，但狀態已經是 %@，不顯示",
+                                      ms, machine.state.rawValue))
+                    return
+                }
                 overlay.show(snapshot: image, thetaOpen: thetaOpen)
+                Log.write(String(format: "快照 %.0f ms，覆蓋窗已顯示", ms))
             } catch {
-                NSLog("LidFold：拍快照失敗 — \(error)")
+                Log.write("拍快照失敗 — \(error)")
             }
         }
     }
@@ -106,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let image = try await ScreenCapture.captureBuiltIn()
                 overlay.show(snapshot: image, thetaOpen: thetaOpen)
             } catch {
-                NSLog("LidFold：拍快照失敗 — \(error)")
+                Log.write("拍快照失敗 — \(error)")
                 NSApp.terminate(nil)
             }
         }
