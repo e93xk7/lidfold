@@ -71,6 +71,7 @@ func replay(_ rows: [Row]) -> (transitions: [Transition], machine: LidStateMachi
 /// 一份錄音該長什麼樣。依檔名（去掉副檔名）對應。
 struct Expectation {
     let closes: Int               // didStartClosing 次數
+    let resumes: Int              // didResumeClosing 次數（停一下又繼續，沿用原快照）
     let stops: Int                // didStopClosing 次數
     let mustClose: Bool           // 要不要出現 didClose
     /// didStartClosing 時，θ 最多可以比 θ_open 低幾度（越小代表反應越快）。
@@ -78,13 +79,14 @@ struct Expectation {
 }
 
 let expectations: [String: Expectation] = [
-    "normal_1": Expectation(closes: 1, stops: 0, mustClose: true, maxTriggerLag: 20),
-    "normal_2": Expectation(closes: 1, stops: 0, mustClose: true, maxTriggerLag: 20),
-    "normal_3": Expectation(closes: 1, stops: 0, mustClose: true, maxTriggerLag: 20),
-    "slow":     Expectation(closes: 1, stops: 0, mustClose: true, maxTriggerLag: 10),
-    "fast":     Expectation(closes: 1, stops: 0, mustClose: true, maxTriggerLag: 40),
-    // 闔到一半停住再繼續：停一次、所以會闔兩次。
-    "pause_resume": Expectation(closes: 2, stops: 1, mustClose: true, maxTriggerLag: 25),
+    "normal_1": Expectation(closes: 1, resumes: 0, stops: 0, mustClose: true, maxTriggerLag: 20),
+    "normal_2": Expectation(closes: 1, resumes: 0, stops: 0, mustClose: true, maxTriggerLag: 20),
+    "normal_3": Expectation(closes: 1, resumes: 0, stops: 0, mustClose: true, maxTriggerLag: 20),
+    "slow":     Expectation(closes: 1, resumes: 0, stops: 0, mustClose: true, maxTriggerLag: 10),
+    "fast":     Expectation(closes: 1, resumes: 0, stops: 0, mustClose: true, maxTriggerLag: 40),
+    // 闔到一半停住再繼續：只拍一次快照，第二段用 didResumeClosing 接回來。
+    // 重拍的話虛擬平面會重設，畫面會跳 —— M3 實測就是栽在這裡。
+    "pause_resume": Expectation(closes: 1, resumes: 1, stops: 1, mustClose: true, maxTriggerLag: 25),
 ]
 
 // MARK: - 主程式
@@ -211,6 +213,7 @@ for path in paths {
 
     let (transitions, _) = replay(rows)
     let closes = transitions.filter { $0.event == .didStartClosing }
+    let resumes = transitions.filter { $0.event == .didResumeClosing }
     let stops = transitions.filter { $0.event == .didStopClosing }
     let closed = transitions.contains { $0.event == .didClose }
 
@@ -232,6 +235,9 @@ for path in paths {
     if closes.count != exp.closes {
         problems.append("didStartClosing \(closes.count) 次，應為 \(exp.closes)")
     }
+    if resumes.count != exp.resumes {
+        problems.append("didResumeClosing \(resumes.count) 次，應為 \(exp.resumes)")
+    }
     if stops.count != exp.stops {
         problems.append("didStopClosing \(stops.count) 次，應為 \(exp.stops)")
     }
@@ -251,7 +257,8 @@ for path in paths {
     }
 
     if problems.isEmpty {
-        print("✓ \(name)：闔 \(closes.count) 次、停 \(stops.count) 次、觸發落後 \(lagText)")
+        print("✓ \(name)：闔 \(closes.count) 次、續 \(resumes.count) 次、停 \(stops.count) 次、"
+              + "觸發落後 \(lagText)")
     } else {
         print("✗ \(name)：" + problems.joined(separator: "；"))
         failures += 1

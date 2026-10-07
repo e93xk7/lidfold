@@ -25,6 +25,8 @@ final class OverlayController {
     var angleProvider: () -> Double = { 0 }
     /// M3 的除錯開關：顯示角度與視距。
     var showDebugText = false
+    /// 眼睛位置（公分，相對轉軸）。M3 的主要旋鈕，用 --eye 前,高 調。
+    var eye = Projection.Eye()
 
     private var debugLayer: CATextLayer?
 
@@ -124,17 +126,18 @@ final class OverlayController {
     private func apply(theta: Double) {
         guard let layer = imageLayer else { return }
         let m = Projection.transform(theta: theta, thetaOpen: thetaOpen,
-                                     pixelsPerCm: pixelsPerCm, bezelPixels: bezelPixels)
+                                     pixelsPerCm: pixelsPerCm, bezelPixels: bezelPixels,
+                                     eye: eye)
         // 關掉隱式動畫：每一幀都是我們自己算的，交給 Core Animation 補間會變成雙重動畫。
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.transform = m
         if let d = debugLayer {
-            let e = Projection.eyeInScreenFrame(theta: theta, eye: Projection.Eye())
-            d.string = String(format: "θ=%.1f°  Δθ=%.1f°  視距=%.1f cm%@",
+            let e = Projection.eyeInScreenFrame(theta: theta, eye: eye)
+            d.string = String(format: "θ=%.1f°  Δθ=%.1f°  視距=%.1f cm%@   眼睛 %.0f/%.0f cm",
                               theta, thetaOpen - theta, e.outward,
-                              Projection.isVisible(theta: theta, eye: Projection.Eye())
-                                ? "" : "（已夾住）")
+                              Projection.isVisible(theta: theta, eye: eye) ? "" : "（已夾住）",
+                              eye.forward, eye.up)
         }
         CATransaction.commit()
     }

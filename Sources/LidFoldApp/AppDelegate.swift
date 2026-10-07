@@ -17,12 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var demoMode = false
     /// `--debug`：覆蓋窗上顯示 θ / Δθ / 視距。
     var debugText = false
+    /// `--eye 前,高`：眼睛位置（公分，相對轉軸）。M3 的主要旋鈕。
+    var eye = Projection.Eye()
 
     private var demoTheta: Double?
     private var demoStart: Double = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Log.write(String(format: "啟動：眼睛在轉軸前方 %.0f cm、上方 %.0f cm",
+                         eye.forward, eye.up))
         overlay.showDebugText = debugText
+        overlay.eye = eye
         overlay.angleProvider = { [weak self] in
             guard let self else { return 0 }
             if let d = self.demoTheta { return d }
@@ -68,12 +73,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for e in events { handle(e) }
     }
 
+    /// 停住之後的寬限計時器：在這段時間內又繼續闔，就沿用同一張快照。
+    private var pauseTimer: Timer?
+
     private func handle(_ event: LidEvent) {
+        Log.write(String(format: "%@（θ=%.1f°）", event.rawValue, predictor.current))
         switch event {
         case .didStartClosing:
+            pauseTimer?.invalidate()
+            pauseTimer = nil
             captureAndShow()
-        case .didClose, .didStartOpening, .didStopClosing:
+
+        case .didResumeClosing:
+            // 同一次闔蓋，畫面繼續動就好，不重拍、不重設虛擬平面。
+            pauseTimer?.invalidate()
+            pauseTimer = nil
+            if !overlay.isShowing { captureAndShow() }
+
+        case .didStopClosing:
+            // 先凍住（畫面停在那裡，內容仍然釘在原處），等看看會不會繼續。
+            pauseTimer?.invalidate()
+            pauseTimer = Timer.scheduledTimer(withTimeInterval: Tuning.resumeGrace,
+                                              repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    Log.write("停太久，收掉覆蓋窗")
+                    self?.overlay.hide()
+                }
+            }
+
+        case .didClose, .didStartOpening:
+            pauseTimer?.invalidate()
+            pauseTimer = nil
             overlay.hide()
+
         case .didOpen:
             break
         }

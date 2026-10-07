@@ -9,7 +9,8 @@ public enum LidState: String, CaseIterable {
 
 public enum LidEvent: String {
     case didStartClosing   // → 拍快照、建覆蓋窗
-    case didStopClosing    // 闔到一半停住 → 收掉覆蓋窗
+    case didResumeClosing  // 停一下又繼續闔 → 沿用原本的快照與虛擬平面，不要重拍
+    case didStopClosing    // 闔到一半停住 → 凍住畫面，等一下看會不會繼續
     case didClose          // 螢幕要關了 → 收掉覆蓋窗
     case didStartOpening   // → 收掉覆蓋窗
     case didOpen           // 回到正常角度
@@ -32,6 +33,8 @@ public final class LidStateMachine {
     private var closingVotes = 0
     private var openingVotes = 0
     private var stillSince: Double?
+    /// 上一次從「闔上中」停下來的時間。短時間內又繼續闔，就當成同一次闔蓋。
+    private var stoppedClosingAt: Double?
 
     public init() {}
 
@@ -84,9 +87,18 @@ public final class LidStateMachine {
                 events.append(.didClose)
             } else if closingVotes >= Tuning.confirmUpdates {
                 if state == .opening { events.append(.didOpen) }
-                thetaOpen = restAngle ?? theta
-                state = .closing
-                events.append(.didStartClosing)
+                // 剛剛才停下來、而且上蓋沒有被往回打開 → 當成同一次闔蓋繼續，
+                // 沿用原本的 θ_open。重設虛擬平面會讓畫面瞬間跳回去再重來。
+                let resuming = stoppedClosingAt.map { now - $0 <= Tuning.resumeGrace } ?? false
+                let didNotReopen = thetaOpen.map { theta <= $0 + Tuning.reopenTolerance } ?? false
+                if resuming && didNotReopen && state == .idle {
+                    state = .closing
+                    events.append(.didResumeClosing)
+                } else {
+                    thetaOpen = restAngle ?? theta
+                    state = .closing
+                    events.append(.didStartClosing)
+                }
             } else if state == .opening, let since = stillSince,
                       now - since >= Tuning.stillHoldTime {
                 state = .idle
@@ -105,9 +117,10 @@ public final class LidStateMachine {
                 events.append(.didStopClosing)
                 events.append(.didStartOpening)
             } else if let since = stillSince, now - since >= Tuning.stillHoldTime {
-                // 闔到一半停住：收掉動畫，但 restAngle 會重新記點，
-                // 繼續闔的時候以停住的位置當新的 θ_open。
+                // 闔到一半停住：先凍住畫面。在 resumeGrace 之內又繼續闔的話，
+                // 會以 didResumeClosing 接回來，虛擬平面不動。
                 state = .idle
+                stoppedClosingAt = now
                 events.append(.didStopClosing)
             }
 
