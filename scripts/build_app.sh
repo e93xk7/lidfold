@@ -43,7 +43,7 @@ PLIST
 if security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
     codesign --force --sign "$IDENTITY" --timestamp=none \
         --options runtime --identifier local.lidfold "$APP"
-    echo "已用「$IDENTITY」簽章 → $APP"
+    echo "已用 $IDENTITY 簽章 → $APP"
 else
     codesign --force --sign - --identifier local.lidfold "$APP"
     echo "⚠️  找不到憑證 $IDENTITY，用 ad-hoc 簽章。"
