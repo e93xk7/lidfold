@@ -25,17 +25,27 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
     -addext "keyUsage=critical,digitalSignature" \
     -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
 
-openssl pkcs12 -export -out "$TMP/cert.p12" \
-    -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass:
+# -legacy 是關鍵：OpenSSL 3 預設的 PKCS12 演算法 macOS 的 security 讀不懂，
+# 會報「MAC verification failed during PKCS12 import」。密碼也不能留空。
+openssl pkcs12 -export -legacy -out "$TMP/cert.p12" \
+    -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass:lidfold
 
 # 匯入 login keychain，並允許 codesign 使用（-T）。
 security import "$TMP/cert.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
-    -P "" -T /usr/bin/codesign -A
+    -P lidfold -T /usr/bin/codesign -A
 
 echo
-echo "憑證已匯入。接下來要把它設為「永遠信任」—— 會跳一次要你輸入登入密碼："
+echo "憑證已匯入。接下來把它設為信任 —— 會跳一次視窗要你輸入登入密碼："
 security add-trusted-cert -r trustRoot -p codeSign \
     -k "$HOME/Library/Keychains/login.keychain-db" "$TMP/cert.pem"
 
 echo
-security find-identity -v -p codesigning
+if security find-identity -v -p codesigning | grep -q "$NAME"; then
+    security find-identity -v -p codesigning | grep "$NAME"
+    echo "完成。接下來：scripts/build_app.sh"
+else
+    echo "憑證建好了，但還沒被信任（codesign 會拒用）。"
+    echo "手動補救：開「鑰匙圈存取」→ 登入 → 憑證 → 找到「$NAME」→"
+    echo "按兩下 → 信任 → 「程式碼簽署」設為「永遠信任」。"
+    exit 1
+fi
