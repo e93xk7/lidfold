@@ -79,6 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let events = machine.step(theta: out.theta, omega: out.omega,
                                   now: sample.timestamp, isNewUpdate: out.isNewUpdate)
         for e in events { handle(e) }
+
+        // 開回原本的角度就沒東西好畫了，立刻收掉 —— 睡醒時覆蓋窗會蓋住
+        // 登入畫面，不能等狀態機慢慢判定「已經停下來」。
+        if overlay.isShowing, machine.state == .opening,
+           Mapping.progress(theta: out.theta, thetaOpen: lastThetaOpen) <= 0.02 {
+            Log.write("已經開回原角度，收掉覆蓋窗")
+            overlay.hide()
+        }
     }
 
     /// 停住之後的寬限計時器：在這段時間內又繼續闔，就沿用同一張快照。
@@ -90,13 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .didStartClosing:
             pauseTimer?.invalidate()
             pauseTimer = nil
-            captureAndShow()
+            captureAndShow(reason: "didStartClosing")
 
         case .didResumeClosing:
             // 同一次闔蓋，畫面繼續動就好，不重拍、不重設虛擬平面。
             pauseTimer?.invalidate()
             pauseTimer = nil
-            if !overlay.isShowing { captureAndShow() }
+            if !overlay.isShowing { captureAndShow(reason: "didResumeClosing") }
 
         case .didStopClosing:
             // 先凍住（畫面停在那裡，內容仍然釘在原處），等看看會不會繼續。
@@ -109,30 +117,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-        case .didClose, .didStartOpening:
+        case .didStartOpening:
+            pauseTimer?.invalidate()
+            pauseTimer = nil
+            if overlay.isShowing {
+                // 闔到一半又打開：p 本來就是角度的函數，往回走會自己反著播，
+                // 不用做任何事。白皮書 D5 說 v1 不做開蓋動畫，但 p 是即時綁定的，
+                // 往復本來就該被反映出來。
+                Log.write("往回開，動畫反著走")
+            } else {
+                // 從闔上狀態打開（剛睡醒）：拍一張現在的畫面，從全糊解回清晰。
+                captureAndShow(reason: "didStartOpening")
+            }
+
+        case .didClose:
             pauseTimer?.invalidate()
             pauseTimer = nil
             overlay.hide()
 
         case .didOpen:
-            break
+            // 已經開回原來的角度，動畫結束。
+            overlay.hide()
         }
     }
 
+    /// 這次（或上一次）闔蓋的起始角度。開蓋動畫拿它當「解回清晰」的終點。
+    private var lastThetaOpen: Double = 110
+
     /// 白皮書 D4：進入「闔上中」的瞬間拍一張，整段動畫都用它。
-    private func captureAndShow() {
-        guard !capturing, let thetaOpen = machine.thetaOpen else { return }
+    ///
+    /// 開蓋時也走同一條路：拍一張剛睡醒的畫面，從全糊解回清晰。
+    private func captureAndShow(reason: String) {
+        guard !capturing else { return }
+        // 闔蓋用這次量到的 θ_open；開蓋時狀態機還沒有新的，沿用上一次的。
+        let thetaOpen = machine.thetaOpen ?? lastThetaOpen
+        lastThetaOpen = thetaOpen
+        let wanted = machine.state
         capturing = true
         let t0 = ProcessInfo.processInfo.systemUptime
-        Log.write(String(format: "didStartClosing，θ_open=%.1f°，開始拍快照", thetaOpen))
+        Log.write(String(format: "%@，θ_open=%.1f°，開始拍快照", reason, thetaOpen))
         Task { @MainActor in
             defer { capturing = false }
             do {
                 let image = try await ScreenCapture.captureBuiltIn()
                 let ms = (ProcessInfo.processInfo.systemUptime - t0) * 1000
-                // 拍照是非同步的，拍回來時上蓋可能已經停了或打開了，那就不要顯示。
-                guard machine.state == .closing else {
-                    Log.write(String(format: "快照 %.0f ms 拍回來，但狀態已經是 %@，不顯示",
+                // 拍照是非同步的，拍回來時上蓋可能已經停了或反向了，那就不要顯示。
+                guard machine.state == wanted else {
+                    Log.write(String(format: "快照 %.0f ms 拍回來，但狀態已經變成 %@，不顯示",
                                       ms, machine.state.rawValue))
                     return
                 }
@@ -161,14 +192,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // 2 秒內從 θ_open 掃到 30°，再停在那裡，方便截圖細看。
+        // 闔 1.5 秒、停 0.5 秒、再開 1.5 秒，來回各看一次。
         Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] t in
             MainActor.assumeIsolated {
                 guard let self else { t.invalidate(); return }
                 let elapsed = ProcessInfo.processInfo.systemUptime - self.demoStart
-                let p = min(elapsed / 2.0, 1.0)
-                self.demoTheta = thetaOpen + (30 - thetaOpen) * p
-                if elapsed > 8 { NSApp.terminate(nil) }
+                let closed = 10.0
+                let q: Double
+                switch elapsed {
+                case ..<1.5:  q = elapsed / 1.5            // 闔
+                case ..<2.0:  q = 1                         // 停
+                case ..<3.5:  q = 1 - (elapsed - 2.0) / 1.5 // 開
+                default:      q = 0
+                }
+                self.demoTheta = thetaOpen + (closed - thetaOpen) * q
+                if elapsed > 5 { NSApp.terminate(nil) }
             }
         }
     }
