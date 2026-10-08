@@ -17,17 +17,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var demoMode = false
     /// `--debug`：覆蓋窗上顯示 θ / Δθ / 視距。
     var debugText = false
-    /// `--eye 前,高`：眼睛位置（公分，相對轉軸）。M3 的主要旋鈕。
+    /// `--eye 前,高`：眼睛位置（公分，相對轉軸）。
     var eye = Projection.Eye()
+    /// `--strength k`：投影強度，1 = 物理精確。只有 projection 模式用得到。
+    var strength = Tuning.projectionStrength
+    /// `--mode gradient|projection`
+    var mode: RenderMode = .gradient
+    /// `--from hinge|top`
+    var sweepFrom: SweepOrigin = .hinge
 
     private var demoTheta: Double?
     private var demoStart: Double = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.write(String(format: "啟動：眼睛在轉軸前方 %.0f cm、上方 %.0f cm",
-                         eye.forward, eye.up))
+        Log.write("啟動：模式 \(mode.rawValue)，模糊從 \(sweepFrom.rawValue) 掃")
         overlay.showDebugText = debugText
         overlay.eye = eye
+        overlay.strength = strength
+        overlay.mode = mode
+        overlay.sweepFrom = sweepFrom
         overlay.angleProvider = { [weak self] in
             guard let self else { return 0 }
             if let d = self.demoTheta { return d }

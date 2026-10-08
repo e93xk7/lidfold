@@ -7,6 +7,10 @@ import LidFoldCore
 //   LidFold.app --demo          不碰上蓋，用假角度掃一遍（開發用）
 //   LidFold.app --debug         覆蓋窗上顯示 θ / Δθ / 視距
 //   LidFold.app --eye 45,30     眼睛在轉軸前方 45 cm、上方 30 cm（M3 調校用）
+//   LidFold.app --mode gradient 以轉軸為起點的漸進模糊（預設，內容不動）
+//   LidFold.app --mode projection  舊的透視投影，對照用
+//   LidFold.app --from hinge|top   模糊前緣從哪一側開始掃
+//   LidFold.app --strength 0.4  投影強度，1 = 物理精確（只有 projection 模式用）
 
 @MainActor
 func start() {
@@ -21,6 +25,21 @@ func start() {
         if parts.count == 2 {
             delegate.eye = Projection.Eye(forward: parts[0], up: parts[1])
         }
+    }
+    if let i = CommandLine.arguments.firstIndex(of: "--strength"),
+       i + 1 < CommandLine.arguments.count,
+       let k = Double(CommandLine.arguments[i + 1]) {
+        delegate.strength = k
+    }
+    if let i = CommandLine.arguments.firstIndex(of: "--mode"),
+       i + 1 < CommandLine.arguments.count,
+       let m = RenderMode(rawValue: CommandLine.arguments[i + 1]) {
+        delegate.mode = m
+    }
+    if let i = CommandLine.arguments.firstIndex(of: "--from"),
+       i + 1 < CommandLine.arguments.count,
+       let f = SweepOrigin(rawValue: CommandLine.arguments[i + 1]) {
+        delegate.sweepFrom = f
     }
     app.delegate = delegate
     // 選單列 app（M5 才加 NSStatusItem），不進 Dock。

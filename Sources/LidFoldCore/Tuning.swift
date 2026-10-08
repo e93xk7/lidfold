@@ -83,6 +83,29 @@ public enum Tuning {
     /// 眼睛在轉軸上方多高，單位公分。同上。
     public static let eyeUpCm: Double = 30
 
+    // MARK: - 漸進模糊（gradient 模式，預設）
+
+    /// 模糊前緣的柔邊寬度，螢幕高度的比例。越大過渡越軟。
+    public static let sweepSoftness: Double = 0.45
+
+    /// 相鄰兩層模糊之間，前緣錯開多少（螢幕高度比例）。
+    /// 錯開才會出現「清晰 → 半糊 → 全糊」的連續層次。
+    public static let sweepStagger: Double = 0.30
+
+    /// 整體變暗的最大程度（白皮書 5.3：1 − 0.7·smoothstep）。
+    public static let dimMax: Double = 0.7
+    /// 從 p 多少開始變暗。
+    public static let dimStart: Double = 0.45
+
+    // MARK: - 透視投影（projection 模式，對照用）
+
+    /// 投影強度。1 = 物理上精確（內容完全釘在空間裡），0 = 完全不動。
+    ///
+    /// M3 實測：1.0 幾何正確但畫面會放大到快 3 倍（闔 70° 時 1/cos70°），
+    /// 看起來像「螢幕被拉長」而不是「內容待在原地」。單片平面螢幕上
+    /// 物理正確不等於好看，所以留一個強度旋鈕，用 --strength 調。
+    public static let projectionStrength: Double = 0.4
+
     /// 轉軸到顯示區下緣的距離（下邊框），單位公分。M3 量機器實體。
     public static let bezelBottomCm: Double = 1.0
 

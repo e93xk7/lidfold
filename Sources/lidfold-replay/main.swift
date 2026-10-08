@@ -110,8 +110,10 @@ func checkGeometry() -> Bool {
             print(String(format: "  %5.1f°   視距已不足，幾何夾住（交給 M4 蓋掉）", theta))
             continue
         }
+        // 自檢用強度 1：物理精確的那個版本才該零偏移。
+        // 實際動畫用的強度小於 1（刻意的，見 Tuning.projectionStrength）。
         let m = Projection.transform(theta: theta, thetaOpen: thetaOpen,
-                                     pixelsPerCm: pixelsPerCm)
+                                     pixelsPerCm: pixelsPerCm, strength: 1.0)
         // 圖層上的點 (probe) 經過變換後落在螢幕的哪裡。
         let w = probe.x * m.m14 + probe.y * m.m24 + m.m44
         guard abs(w) > 1e-9 else { continue }
@@ -146,6 +148,53 @@ func checkGeometry() -> Bool {
     return ok
 }
 
+/// 漸進模糊的遮罩自檢：p=0 時整面清晰、p=1 時整面掃完、中間單調前進。
+func checkSweep() -> Bool {
+    let layers = 3   // 清晰 + 兩張模糊
+    print("── 漸進模糊遮罩（\(layers) 層）")
+    print("    p     最清晰層        中層            最模糊層        （lo–hi：lo 以下藏起來）")
+    var ok = true
+    var previous: [Double] = []
+    for step in 0...10 {
+        let p = Double(step) / 10
+        var cells: [String] = []
+        var los: [Double] = []
+        for i in 0..<layers {
+            let m = Mapping.sweepMask(p: p, indexFromSharpest: i, layerCount: layers)
+            cells.append(String(format: "%.2f–%.2f", m.lo, m.hi))
+            los.append(m.lo)
+        }
+        print(String(format: "  %.1f   %@", p, cells.joined(separator: "    ")))
+
+        // 遮罩只能往前掃，不能倒退。
+        if !previous.isEmpty {
+            for (a, b) in zip(previous, los) where b < a - 1e-9 {
+                print("  ✗ p=\(p) 的遮罩比前一步退回去了")
+                ok = false
+            }
+        }
+        previous = los
+
+        // 最清晰那層一定被掃得最多（最先糊掉）。
+        if layers > 1, los[0] < los[layers - 1] - 1e-9 {
+            print("  ✗ p=\(p)：最模糊的那層反而先被掃掉，層次順序錯了")
+            ok = false
+        }
+    }
+    let start = Mapping.sweepMask(p: 0, indexFromSharpest: 0, layerCount: layers)
+    let end = Mapping.sweepMask(p: 1, indexFromSharpest: layers - 1, layerCount: layers)
+    if start.lo > 1e-9 || start.hi > 1e-9 {
+        print("  ✗ p=0 時最清晰層就已經被遮掉一部分（lo=\(start.lo) hi=\(start.hi)）")
+        ok = false
+    }
+    if end.lo < 1 - 1e-9 {
+        print("  ✗ p=1 時最模糊層還沒掃完（lo=\(end.lo)）")
+        ok = false
+    }
+    print(ok ? "✓ 遮罩：起點乾淨、終點掃完、層次順序正確" : "✗ 遮罩有問題")
+    return ok
+}
+
 var trace = false
 var predictDir: String?
 var paths: [String] = []
@@ -156,6 +205,8 @@ while !pending.isEmpty {
         trace = true
     } else if a == "--geometry" {
         exit(checkGeometry() ? 0 : 1)
+    } else if a == "--sweep" {
+        exit(checkSweep() ? 0 : 1)
     } else if a == "--predict" {
         predictDir = pending.isEmpty ? "data/predict" : pending.removeFirst()
     } else {

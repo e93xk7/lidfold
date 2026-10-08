@@ -70,11 +70,18 @@ public enum Projection {
     /// - Returns: 設給圖層的 `transform`。圖層的 anchorPoint 要在下緣中點（轉軸）。
     ///   - bezelPixels: 轉軸到「顯示區下緣」的距離（點）。圖層的 y=0 在顯示區下緣，
     ///     但旋轉軸在轉軸上，中間隔著下邊框，差這一段幾何就會歪。
+    ///   - strength: 投影強度。1 = 物理上精確（內容完全釘在空間裡）。
+    ///     小於 1 等於「假裝上蓋只轉了一部分」，變形溫和很多。
+    ///     M3 實測 1.0 太誇張 —— 幾何雖然對，但畫面放大到快 3 倍，
+    ///     看起來像螢幕被拉長，而不是內容待在原地。
     public static func transform(theta: Double, thetaOpen: Double,
                                  pixelsPerCm: Double, bezelPixels: Double = 0,
-                                 eye: Eye = Eye()) -> CATransform3D {
-        let delta = (thetaOpen - theta) * .pi / 180
-        let e = eyeInScreenFrame(theta: theta, eye: eye)
+                                 eye: Eye = Eye(),
+                                 strength: Double = Tuning.projectionStrength) -> CATransform3D {
+        let delta = (thetaOpen - theta) * strength * .pi / 180
+        // 視距跟著「假裝的角度」走，不然投影中心會跟旋轉量對不上。
+        let effectiveTheta = thetaOpen - (thetaOpen - theta) * strength
+        let e = eyeInScreenFrame(theta: effectiveTheta, eye: eye)
 
         // 視距太小（眼睛快貼到螢幕平面）時透視會爆掉。夾住，剩下的交給 M4 的模糊變暗蓋掉。
         let d = max(e.outward, Tuning.minEyeDistanceCm) * pixelsPerCm
