@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import LidFoldCore
 
 @MainActor
@@ -71,9 +72,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 感測器
 
     private var lastOmega: Double = 0
+    private var displayWasAsleep = false
 
     private func poll() {
         guard let sensor, let sample = try? sensor.read() else { return }
+
+        // 螢幕亮起來的時間點 —— 開蓋動畫看得到多少，全看這個跟角度的賽跑。
+        let asleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        if asleep != displayWasAsleep {
+            displayWasAsleep = asleep
+            Log.write(String(format: "螢幕%@（θ=%.1f°）", asleep ? "關了" : "亮了", sample.theta))
+        }
         let out = signalChain.ingest(sample)
         lastOmega = out.omega
         let events = machine.step(theta: out.theta, omega: out.omega,
@@ -125,9 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 不用做任何事。白皮書 D5 說 v1 不做開蓋動畫，但 p 是即時綁定的，
                 // 往復本來就該被反映出來。
                 Log.write("往回開，動畫反著走")
+            } else if let snapshot = lastSnapshot {
+                // 從闔上狀態打開：用闔蓋時拍的那張，從全糊解回清晰。
+                Log.write(String(format: "開蓋，沿用闔蓋時的快照，θ_open=%.1f°", lastThetaOpen))
+                overlay.show(snapshot: snapshot, thetaOpen: lastThetaOpen)
             } else {
-                // 從闔上狀態打開（剛睡醒）：拍一張現在的畫面，從全糊解回清晰。
-                captureAndShow(reason: "didStartOpening")
+                Log.write("開蓋，但手上沒有可用的快照（這次還沒闔過），不顯示")
             }
 
         case .didClose:
@@ -143,6 +155,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 這次（或上一次）闔蓋的起始角度。開蓋動畫拿它當「解回清晰」的終點。
     private var lastThetaOpen: Double = 110
+
+    /// 闔蓋時拍的那張快照，留給開蓋動畫用。
+    ///
+    /// 開蓋當下**不能**重拍：那一刻螢幕還沒亮，拍回來是全黑的，
+    /// 拿它蓋住整個螢幕等於讓畫面一直是黑的（M3 實測就是這樣）。
+    private var lastSnapshot: CGImage?
 
     /// 白皮書 D4：進入「闔上中」的瞬間拍一張，整段動畫都用它。
     ///
@@ -167,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       ms, machine.state.rawValue))
                     return
                 }
+                lastSnapshot = image
                 overlay.show(snapshot: image, thetaOpen: thetaOpen)
                 Log.write(String(format: "快照 %.0f ms，覆蓋窗已顯示", ms))
             } catch {
