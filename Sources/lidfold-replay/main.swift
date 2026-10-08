@@ -149,9 +149,9 @@ func checkGeometry() -> Bool {
 }
 
 /// 漸進模糊的遮罩自檢：p=0 時整面清晰、p=1 時整面掃完、中間單調前進。
-func checkSweep() -> Bool {
+func checkSweep(span: Double = 1, label: String = "整面單向") -> Bool {
     let layers = 3   // 清晰 + 兩張模糊
-    print("── 漸進模糊遮罩（\(layers) 層）")
+    print("── 漸進模糊遮罩（\(layers) 層，\(label)，行程 \(span)）")
     print("    p     最清晰層        中層            最模糊層        （lo–hi：lo 以下藏起來）")
     var ok = true
     var previous: [Double] = []
@@ -160,7 +160,7 @@ func checkSweep() -> Bool {
         var cells: [String] = []
         var los: [Double] = []
         for i in 0..<layers {
-            let m = Mapping.sweepMask(p: p, indexFromSharpest: i, layerCount: layers)
+            let m = Mapping.sweepMask(p: p, indexFromSharpest: i, layerCount: layers, span: span)
             cells.append(String(format: "%.2f–%.2f", m.lo, m.hi))
             los.append(m.lo)
         }
@@ -181,14 +181,14 @@ func checkSweep() -> Bool {
             ok = false
         }
     }
-    let start = Mapping.sweepMask(p: 0, indexFromSharpest: 0, layerCount: layers)
-    let end = Mapping.sweepMask(p: 1, indexFromSharpest: layers - 1, layerCount: layers)
+    let start = Mapping.sweepMask(p: 0, indexFromSharpest: 0, layerCount: layers, span: span)
+    let end = Mapping.sweepMask(p: 1, indexFromSharpest: layers - 1, layerCount: layers, span: span)
     if start.lo > 1e-9 || start.hi > 1e-9 {
         print("  ✗ p=0 時最清晰層就已經被遮掉一部分（lo=\(start.lo) hi=\(start.hi)）")
         ok = false
     }
-    if end.lo < 1 - 1e-9 {
-        print("  ✗ p=1 時最模糊層還沒掃完（lo=\(end.lo)）")
+    if end.lo < span - 1e-9 {
+        print("  ✗ p=1 時最模糊層還沒掃完（lo=\(end.lo)，應為 \(span)）")
         ok = false
     }
     print(ok ? "✓ 遮罩：起點乾淨、終點掃完、層次順序正確" : "✗ 遮罩有問題")
@@ -206,7 +206,10 @@ while !pending.isEmpty {
     } else if a == "--geometry" {
         exit(checkGeometry() ? 0 : 1)
     } else if a == "--sweep" {
-        exit(checkSweep() ? 0 : 1)
+        let sides = checkSweep(span: 0.5, label: "側邊：兩側往中線")
+        print("")
+        let vertical = checkSweep(span: 1, label: "整面單向")
+        exit(sides && vertical ? 0 : 1)
     } else if a == "--predict" {
         predictDir = pending.isEmpty ? "data/predict" : pending.removeFirst()
     } else {

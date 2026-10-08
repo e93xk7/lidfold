@@ -11,12 +11,18 @@ enum RenderMode: String {
     case projection
 }
 
-/// 模糊前緣從哪一側開始掃。
+/// 模糊前緣從哪裡開始掃。
 enum SweepOrigin: String {
-    /// 從轉軸（螢幕下緣）開始往上掃。內容像是「流進轉軸」。
+    /// **側邊模糊**：從左右兩側同時往中線吃，中間最後才糊。
+    /// iPhone Duo 沿垂直軸對折，模糊就是這樣橫向擴散的。
+    case sides
+    /// 從轉軸（螢幕下緣）開始往上掃。
     case hinge
-    /// 從上緣開始往下掃。上緣是闔蓋時移動最快的地方。
+    /// 從上緣開始往下掃。
     case top
+
+    /// 前緣要走多遠：兩側往中線只要走半個螢幕，單向掃要走整面。
+    var span: Double { self == .sides ? 0.5 : 1 }
 }
 
 /// Render 層（白皮書 5.4）：蓋滿內建螢幕的覆蓋窗。
@@ -48,7 +54,7 @@ final class OverlayController {
     /// 顯示 θ / p / 模式。
     var showDebugText = false
     var mode: RenderMode = .gradient
-    var sweepFrom: SweepOrigin = .hinge
+    var sweepFrom: SweepOrigin = .sides
     /// 眼睛位置（公分，相對轉軸）。只有 projection 模式用得到。
     var eye = Projection.Eye()
     /// 投影強度，1 = 物理精確。只有 projection 模式用得到。
@@ -220,28 +226,42 @@ final class OverlayController {
         CATransaction.commit()
     }
 
-    /// 以轉軸為起點的漸進模糊：模糊前緣隨 p 往外掃，內容本身一動也不動。
+    /// 漸進模糊：模糊前緣隨 p 推進，內容本身一動也不動。
     ///
-    /// 圖層由下往上是「最模糊 → 次模糊 → 清晰」，每層的遮罩前緣錯開一段。
-    /// 所以同一瞬間螢幕上同時存在清晰／半糊／全糊三段，中間平滑接起來，
-    /// 看起來就是畫面從轉軸那側開始糊掉、往外蔓延。
+    /// 圖層由下往上是「最模糊 → 次模糊 → 清晰」，每層的遮罩前緣錯開一段，
+    /// 所以同一瞬間螢幕上同時存在清晰／半糊／全糊三段，中間平滑接起來。
+    ///
+    /// 預設 `sides`：從左右兩側同時往中線吃 —— Duo 沿垂直軸對折，
+    /// 模糊就是這樣橫向擴散的。
     private func applyGradient(p: Double) {
         let count = masks.count
         guard count > 0 else { return }
+        let clear = NSColor.clear.cgColor
+        let solid = NSColor.black.cgColor
+
         for (i, mask) in masks.enumerated() {
             // i = 0 是最模糊那層（最下面），最晚被前緣掃到。
             let edges = Mapping.sweepMask(p: p, indexFromSharpest: count - 1 - i,
-                                          layerCount: count)
-            let lo = Float(edges.lo)
-            let hi = Float(edges.hi)
+                                          layerCount: count, span: sweepFrom.span)
+            let lo = edges.lo
+            let hi = edges.hi
 
-            // hinge：下緣先糊 → 遮罩從下往上由透明轉不透明。
-            // top：上緣先糊 → 方向反過來。
-            let start = sweepFrom == .hinge ? CGPoint(x: 0.5, y: 0) : CGPoint(x: 0.5, y: 1)
-            let end = sweepFrom == .hinge ? CGPoint(x: 0.5, y: 1) : CGPoint(x: 0.5, y: 0)
-            mask.startPoint = start
-            mask.endPoint = end
-            mask.locations = [NSNumber(value: lo), NSNumber(value: hi)]
+            switch sweepFrom {
+            case .sides:
+                // 左右對稱：兩端透明（已糊掉），中間一條還清晰。
+                // 四個色標讓同一個 CAGradientLayer 做出對稱的帶狀遮罩。
+                mask.startPoint = CGPoint(x: 0, y: 0.5)
+                mask.endPoint = CGPoint(x: 1, y: 0.5)
+                mask.colors = [clear, solid, solid, clear]
+                mask.locations = [NSNumber(value: lo), NSNumber(value: hi),
+                                  NSNumber(value: 1 - hi), NSNumber(value: 1 - lo)]
+            case .hinge, .top:
+                // 單向掃：hinge 由下往上，top 反過來。
+                mask.startPoint = sweepFrom == .hinge ? CGPoint(x: 0.5, y: 0) : CGPoint(x: 0.5, y: 1)
+                mask.endPoint = sweepFrom == .hinge ? CGPoint(x: 0.5, y: 1) : CGPoint(x: 0.5, y: 0)
+                mask.colors = [clear, solid]
+                mask.locations = [NSNumber(value: lo), NSNumber(value: hi)]
+            }
         }
 
         // gradient 模式完全不動幾何 —— 不縮放、不位移、不旋轉。

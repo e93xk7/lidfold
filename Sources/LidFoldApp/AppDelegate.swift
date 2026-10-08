@@ -23,8 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var strength = Tuning.projectionStrength
     /// `--mode gradient|projection`
     var mode: RenderMode = .gradient
-    /// `--from hinge|top`
-    var sweepFrom: SweepOrigin = .hinge
+    /// `--from sides|hinge|top`
+    var sweepFrom: SweepOrigin = .sides
 
     private var demoTheta: Double?
     private var demoStart: Double = 0

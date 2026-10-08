@@ -9,7 +9,7 @@ import LidFoldCore
 //   LidFold.app --eye 45,30     眼睛在轉軸前方 45 cm、上方 30 cm（M3 調校用）
 //   LidFold.app --mode gradient 以轉軸為起點的漸進模糊（預設，內容不動）
 //   LidFold.app --mode projection  舊的透視投影，對照用
-//   LidFold.app --from hinge|top   模糊前緣從哪一側開始掃
+//   LidFold.app --from sides|hinge|top  模糊從哪裡開始掃（預設 sides：兩側往中線）
 //   LidFold.app --strength 0.4  投影強度，1 = 物理精確（只有 projection 模式用）
 
 @MainActor

@@ -32,18 +32,21 @@ public enum Mapping {
     ///   - p: 動畫進度 0–1。
     ///   - indexFromSharpest: 0 = 最清晰那層，數字越大越模糊。
     ///   - layerCount: 總共疊了幾層。
-    /// - Returns: 遮罩的兩個位置 `(lo, hi)`，都在 0–1。
+    ///   - span: 前緣要走多遠。整面掃過去是 1；從兩側往中線吃是 0.5。
+    /// - Returns: 遮罩的兩個位置 `(lo, hi)`，都在 0–span。
     ///   `lo` 以下完全藏起來，`hi` 以上完全露出，中間線性過渡。
     public static func sweepMask(p: Double, indexFromSharpest: Int,
-                                 layerCount: Int) -> (lo: Double, hi: Double) {
-        let soft = Tuning.sweepSoftness
-        let stagger = Tuning.sweepStagger
-        // 行程：從 −soft/2（還沒碰到螢幕）到 1 + soft/2 + 最後一層的錯開量。
-        let travel = 1 + soft + Double(max(layerCount - 1, 0)) * stagger
+                                 layerCount: Int,
+                                 span: Double = 1) -> (lo: Double, hi: Double) {
+        // 柔邊與錯開都照 span 等比縮放，不然側邊模式的過渡會太寬。
+        let soft = Tuning.sweepSoftness * span
+        let stagger = Tuning.sweepStagger * span
+        // 行程：從 −soft/2（還沒碰到螢幕）到 span + soft/2 + 最後一層的錯開量。
+        let travel = span + soft + Double(max(layerCount - 1, 0)) * stagger
         let front = -soft / 2 + min(max(p, 0), 1) * travel
         let edge = front - Double(indexFromSharpest) * stagger
-        let lo = min(max(edge - soft / 2, 0), 1)
-        let hi = min(max(edge + soft / 2, 0), 1)
+        let lo = min(max(edge - soft / 2, 0), span)
+        let hi = min(max(edge + soft / 2, 0), span)
         return (lo, max(lo, hi))
     }
 
