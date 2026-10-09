@@ -3,11 +3,6 @@
 闔上 MacBook 上蓋時，畫面會從兩側漸漸糊掉、往中線收；打開時反過來解開。
 模糊的進度**直接綁在上蓋的實際角度上**——你停手它就停，你往回開它就倒回去。
 
-<!-- 影片：把錄好的檔案拖進 GitHub 的 README 編輯器，GitHub 會上傳並產生一行 URL，
-     用那一行取代下面這段。細節見本檔最後的「換掉這段影片」。 -->
-
-> **▶︎ 影片待補**
-
 Closing a MacBook lid, with the screen content blurring outward from both sides —
 driven in real time by the actual hinge angle, not a canned animation.
 macOS only, and only on MacBooks that have the lid-angle sensor (2019 16" MBP and later).
@@ -136,18 +131,3 @@ scripts/record.sh my_take                     # 錄一次闔蓋成 CSV
 - [`tcsenpai/pybooklid`](https://github.com/tcsenpai/pybooklid)（Python，最短的實作）
 
 動畫的靈感來自 iPhone Duo 的開合動畫。
-
----
-
-<details>
-<summary>換掉上面那段影片</summary>
-
-GitHub 的 README 不能用 markdown 語法嵌入 repo 裡的 mp4。做法是：
-
-1. 用手機拍一段闔蓋／開蓋（橫幅、看得到螢幕內容的角度）。
-2. 到 GitHub 上這個 repo 的 README 按編輯，把影片檔**直接拖進編輯區**。
-   GitHub 會上傳並自動插入一行 `https://github.com/user-attachments/assets/...`。
-3. 用那一行取代「▶︎ 影片待補」那段。
-
-或者轉成 GIF 放進 `docs/`，再用 `![](docs/demo.gif)` 引用。
-</details>
