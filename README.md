@@ -1,133 +1,151 @@
 # LidFold
 
-闔上 MacBook 上蓋時，畫面會從兩側漸漸糊掉、往中線收；打開時反過來解開。
-模糊的進度**直接綁在上蓋的實際角度上**——你停手它就停，你往回開它就倒回去。
+Close a MacBook lid and the screen content blurs inward from both edges; open it and the
+blur retreats. The progress is **bound directly to the real hinge angle** — stop halfway
+and it stops, reverse and it rewinds. No canned timeline.
 
-Closing a MacBook lid, with the screen content blurring outward from both sides —
-driven in real time by the actual hinge angle, not a canned animation.
-macOS only, and only on MacBooks that have the lid-angle sensor (2019 16" MBP and later).
+macOS only, and only on MacBooks that have a lid-angle sensor.
 
 ---
 
-## 這能跑在哪
+## Requirements
 
-- **macOS 14 以上**
-- **有上蓋角度感測器的 MacBook**。2019 年 16 吋 MacBook Pro 之後的機型才有。
-  確認方法：`hidutil list | grep -i 8104`，有東西就有。
-  （已驗證：MacBook Air M4 / Mac16,12 / macOS 27.0.1）
-- 不能跑在 Windows 或 Linux 筆電上：一般筆電只有磁簧開關（開／關兩種狀態），讀不到角度。
+- **macOS 14 or later**
+- **A MacBook with the lid-angle sensor.** Only the 2019 16" MacBook Pro and later have it.
+  Check with `hidutil list | grep -i 8104` — if anything comes back, you have it.
+  (Verified on a MacBook Air M4 / Mac16,12 / macOS 27.0.1.)
+- Not portable to Windows or Linux laptops: a normal laptop only has a magnetic open/closed
+  switch, with no angle to read.
 
-這是自用軟體，**不簽章發行、不上架**。要用就自己 build。
+This is a personal tool. It is **not notarized and not distributed** — build it yourself.
 
-## 裝起來
+## Install
 
 ```sh
-git clone <this repo>
+git clone https://github.com/e93xk7/lidfold.git
 cd lidfold
 
-scripts/make_cert.sh      # 建一張本機自簽憑證（只要跑一次，會問登入密碼）
-scripts/build_app.sh      # 打包 build/LidFold.app
+scripts/make_cert.sh      # one-time: create a local self-signed signing certificate
+scripts/build_app.sh      # builds build/LidFold.app
 open build/LidFold.app
 ```
 
-第一次開會要**螢幕錄製**權限（動畫需要拍下當前畫面）。給完權限要重開一次 app。
-之後它會待在選單列，闔蓋時自動作動。
+On first launch macOS will ask for **Screen Recording** permission — the animation needs a
+snapshot of what is currently on screen. Grant it, then relaunch the app. It then lives in
+the menu bar and triggers on its own whenever you close the lid.
 
-`make_cert.sh` 不是多餘的：macOS 的 TCC 權限綁在程式簽章上，ad-hoc 簽章每次 build 都會變，
-權限就會掉。用一張固定的自簽憑證就能一直留著。
+`make_cert.sh` is not optional busywork: macOS ties TCC permissions to the code signature,
+and an ad-hoc signature changes on every build, so the permission would be revoked each
+time you rebuild. A stable self-signed certificate keeps it.
 
-## 怎麼運作
+## How it works
 
 ```
-HID 感測器 10 Hz  →  平滑 + 角速度  →  狀態機  →  θ → p ∈ [0,1]  →  覆蓋窗
-                                      闔上中/打開中/已關              快照 + 漸層遮罩
+HID sensor @10 Hz  →  smoothing + angular velocity  →  state machine  →  θ → p ∈ [0,1]  →  overlay window
+                                                       closing/opening/closed              snapshot + gradient masks
 ```
 
-- **Sensor**：`IOHIDDeviceRegisterInputReportCallback` 收感測器主動推送，不輪詢。
-- **Signal**：一階低通 + 兩點差分算角速度，外加假跳值防護。
-- **Mapping**：`p = (θ_open − θ) / (θ_open − θ_off)`，θ_open 是這次闔蓋開始前的靜止角度。
-- **Render**：一個蓋滿螢幕的無邊框窗，裡面疊三層同一張快照（清晰、模糊 10px、模糊 28px），
-  每層一個 `CAGradientLayer` 遮罩，前緣錯開。p 推著遮罩走，就得到連續的清晰→半糊→全糊。
+- **Sensor** — `IOHIDDeviceRegisterInputReportCallback`; the sensor pushes, we never poll.
+- **Signal** — one-pole low-pass, two-point difference for angular velocity, plus a spike guard.
+- **Mapping** — `p = (θ_open − θ) / (θ_open − θ_off)`, where `θ_open` is the resting angle
+  from just before this close began.
+- **Render** — a borderless window covering the screen, holding three copies of the same
+  snapshot (sharp, blurred 10px, blurred 28px). Each has a `CAGradientLayer` mask, and the
+  masks' leading edges are staggered. `p` drives the masks, producing a continuous
+  sharp → half-blurred → fully-blurred gradient that sweeps in from both sides.
 
-## 做這個東西學到的事
+## What I learned building this
 
-都是實測出來的，寫在這裡給下一個想碰這顆感測器的人。
+All measured on real hardware. Written down for whoever pokes at this sensor next.
 
-**感測器只有 10 Hz。** 每 100 ms 更新一次。輪詢 130 Hz 也一樣，
-註冊 input report callback 的推送速率也一樣 —— 是硬體的限制。
-正常闔蓋只有 1.6 秒，所以整段動畫的輸入只有 16 個取樣點，
-快闔（0.76 秒）更只有 8 個，每次跳 16–19°。要畫 60 fps 一定得自己插值。
+**The sensor only runs at 10 Hz.** One update every 100 ms. Polling at 130 Hz gives you
+nothing extra, and registering an input-report callback delivers at exactly the same rate —
+it is a hardware limit. A normal lid close takes 1.6 s, so the entire animation is driven by
+about 16 samples; a fast close (0.76 s) gives you 8, each jumping 16–19°. Rendering at
+60 fps means interpolating the gaps yourself.
 
-**插值要用外推，不能用阻尼追蹤。** 一開始寫成「輸出追著目標跑」，平順但動作中落後 8.5°——
-臨界阻尼追蹤器對斜坡輸入本來就有 2τ 的穩態誤差。改成
-「等速外推 + 只對誤差做指數衰減」後，誤差中位降到 0.24–2.5°。
+**Interpolate by extrapolation, not by damped following.** The first version had the output
+chase a target with critical damping. Smooth, but it lagged 8.5° mid-motion — a critically
+damped follower has an inherent 2τ steady-state error against a ramp input. Switching to
+"constant-velocity extrapolation plus exponential decay of the error" dropped the median
+error to 0.24–2.5°.
 
-**角度有兩個 report。** 參考實作都讀 report 1（9-bit，1° 解析度）。
-但 HID report descriptor 裡還有一個 **report 7**：32-bit、logical max 36000、
-unit exponent 10⁻²，也就是同一個角度但 **0.01° 解析度**（靜止雜訊峰對峰只有 0.05°）。
-兩者由同一顆感測器驅動，更新率相同。
+**There are two angle reports.** Every reference implementation reads report 1 (9-bit, 1°
+resolution). But the HID report descriptor also exposes **report 7**: 32-bit, logical max
+36000, unit exponent 10⁻² — the same angle at **0.01° resolution**, with only 0.05°
+peak-to-peak noise at rest. Both come from the same sensor and update at the same rate.
 
-**螢幕關得比想像中晚。** 磁簧開關的觸發角度實測是 **0–6°**（中位 2°），
-不是常見說法的 10–20°。所以動畫窗口有 110° 以上，比預期大很多。
+**The screen turns off much later than you would guess.** The magnetic switch fires at
+**0–6°** (median 2°), not the commonly cited 10–20°. That leaves an animation window of
+over 110°, far more room than expected.
 
-**開蓋時螢幕是亮的。** 原本以為開蓋時螢幕還在睡、沒人看得到，所以不值得做。
-實測：偵測到開蓋後 **45 ms** 螢幕就亮了，當時上蓋才 9.4° —— 整段開蓋動畫都看得到。
-但**開蓋當下不能重拍快照**，那一刻拍回來是全黑的；要沿用闔蓋時拍的那張。
+**The screen is already on while you open the lid.** The original assumption was that
+opening isn't worth animating because the panel is still asleep. Measured: the panel lights
+up **45 ms** after opening is detected, with the lid at just 9.4° — essentially the whole
+opening motion is visible. But **do not take a fresh snapshot when opening begins**: at that
+instant the capture comes back pure black. Reuse the one taken when the lid closed.
 
-**把內容「釘在空間裡」在單片平面螢幕上行不通。** 最初的做法是把畫面做透視投影，
-讓內容看起來固定在空中、機器繞著它轉。幾何完全正確（自檢偏移 0.00000 cm），
-但螢幕越闔，它能看到那塊虛擬平面的角度範圍就越小，畫面必然越放越大 ——
-闔 70° 時放大近 3 倍，看起來不像「內容沒動」，像「螢幕被拉長」。
-那條路還留在 `--mode projection` 裡可以對照。
+**Pinning content in space does not work on a single flat screen.** The first approach was a
+perspective projection that made the content appear fixed in mid-air while the machine
+rotated around it. The geometry was exactly right (self-check drift: 0.00000 cm), but as the
+lid closes, the screen sees a progressively smaller slice of that virtual plane, so the image
+necessarily magnifies — nearly 3× at 70° of closure. It doesn't read as "the content stayed
+still", it reads as "the screen got stretched". That path is still there under
+`--mode projection` for comparison.
 
-**閒置耗電全看有沒有在輪詢。** 用 120 Hz 輪詢去追一個 10 Hz 的感測器，
-閒置就吃掉 1.0% CPU。改成推送、而且只在粗值真的變了才去讀細值（靜止時零 IPC），
-降到 **0.2%**。
+**Idle power is entirely about whether you poll.** Polling at 120 Hz to chase a 10 Hz sensor
+burned 1.0% CPU while doing nothing. Switching to push, and only reading the fine-resolution
+report when the coarse value actually changed (so: zero IPC while stationary), brought it to
+**0.2%**.
 
-## 選項
+## Options
 
 ```sh
-build/LidFold.app/Contents/MacOS/LidFold --demo        # 不碰上蓋，自己掃一遍（開發用）
-                                         --debug       # 覆蓋窗上顯示 θ / p
-                                         --from sides|hinge|top   # 模糊從哪裡開始掃
+build/LidFold.app/Contents/MacOS/LidFold --demo       # sweep through the animation without touching the lid
+                                         --debug      # overlay θ and p on screen
+                                         --from sides|hinge|top   # where the blur sweeps in from
                                          --mode gradient|projection
 ```
 
-可調參數全部集中在 [`Sources/LidFoldCore/Tuning.swift`](Sources/LidFoldCore/Tuning.swift)，
-每個值都註明了是哪個實測數據定的。
+Every tunable lives in [`Sources/LidFoldCore/Tuning.swift`](Sources/LidFoldCore/Tuning.swift),
+each annotated with the measurement that set it.
 
-## 開發
+## Development
 
 ```sh
 swift build
-.build/debug/lidfold-cli                      # 即時印 θ / ω / 狀態 / p
-scripts/record.sh my_take                     # 錄一次闔蓋成 CSV
-.build/debug/lidfold-replay data/takes/*.csv  # 把錄下的闔蓋回放進狀態機檢查
-.build/debug/lidfold-replay --sweep           # 遮罩數學自檢
-.build/debug/lidfold-replay --geometry        # 透視投影幾何自檢
+.build/debug/lidfold-cli                      # live θ / ω / state / p
+scripts/record.sh my_take                     # record one lid close to CSV
+.build/debug/lidfold-replay data/takes/*.csv  # replay recorded closes through the state machine
+.build/debug/lidfold-replay --sweep           # self-check the mask math
+.build/debug/lidfold-replay --geometry        # self-check the perspective projection
 ```
 
-`data/takes/` 裡是實際錄下的闔蓋（慢、快、正常、闔到一半停住再繼續），
-`lidfold-replay` 拿它們當回歸測試 —— 改完狀態機跑一次就知道有沒有弄壞。
+`data/takes/` holds real recorded closes — slow, fast, normal, and one that stops halfway and
+resumes. `lidfold-replay` uses them as regression tests: change the state machine, run it
+once, and you know whether you broke anything.
 
-畫圖的腳本需要 `python3 -m venv .venv && .venv/bin/pip install matplotlib numpy`。
+The plotting scripts need `python3 -m venv .venv && .venv/bin/pip install matplotlib numpy`.
 
-**改完要重新打包時，先把跑著的 app 殺掉**（`build_app.sh` 會自動做）。
-在行程跑著的時候覆蓋 `.app` 的內容，macOS 會判定「程式碼身分已變」，
-當場撤銷螢幕錄製權限（`SCStreamError -3801`）。
+**Kill the running app before rebuilding** (`build_app.sh` does this for you). Replacing the
+contents of a `.app` while its process is alive makes macOS decide the code identity changed
+and revoke Screen Recording on the spot (`SCStreamError -3801`).
 
-## 已知的限制
+Source comments and commit messages are in Chinese.
 
-- 覆蓋窗在一般桌面成立；全螢幕 app 或其他 Space 的情況沒有完整測過。
-- 闔到一半停住超過 2.5 秒，動畫會收掉；再闔會重新拍一張快照。
-- 動作開始的前 100 ms 偵測不到，這是 10 Hz 感測器的硬限制。快闔時約是 13% 的動畫。
+## Known limitations
 
-## 參考
+- The overlay works on a normal desktop. Full-screen apps and other Spaces are untested.
+- Pausing mid-close for more than 2.5 s tears the overlay down; resuming takes a fresh snapshot.
+- The first ~100 ms of motion is undetectable — a hard limit of the 10 Hz sensor. On a fast
+  close that is about 13% of the animation.
 
-這顆感測器怎麼讀，是從這幾個專案學的：
+## Credits
 
-- [`samhenrigold/LidAngleSensor`](https://github.com/samhenrigold/LidAngleSensor)（Swift/ObjC）
-- [`wangfu91/lid-angle-rs`](https://github.com/wangfu91/lid-angle-rs)（Rust，VID/PID/Usage 寫得最清楚）
-- [`tcsenpai/pybooklid`](https://github.com/tcsenpai/pybooklid)（Python，最短的實作）
+How to read this sensor was learned from:
 
-動畫的靈感來自 iPhone Duo 的開合動畫。
+- [`samhenrigold/LidAngleSensor`](https://github.com/samhenrigold/LidAngleSensor) (Swift/ObjC)
+- [`wangfu91/lid-angle-rs`](https://github.com/wangfu91/lid-angle-rs) (Rust — clearest writeup of the VID/PID/usage)
+- [`tcsenpai/pybooklid`](https://github.com/tcsenpai/pybooklid) (Python — the shortest implementation)
+
+The animation is inspired by the iPhone Duo's fold transition.
