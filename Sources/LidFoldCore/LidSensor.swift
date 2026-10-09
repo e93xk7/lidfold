@@ -102,7 +102,103 @@ public final class LidSensor {
     }
 
     deinit {
+        stopStreaming()
         IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+    }
+
+    // MARK: - 推送模式（不輪詢）
+
+    private var inputBuffer: UnsafeMutablePointer<UInt8>?
+    private var inputBufferSize = 64
+    private var onUpdate: ((LidAngleSample) -> Void)?
+    private var scheduled = false
+
+    /// 改用感測器主動推送，不要自己輪詢。
+    ///
+    /// 感測器每 100 ms 會送一次 input report（即使角度沒變也送），所以註冊 callback
+    /// 等於拿到「感測器自己的節拍」—— 延遲比輪詢低，而且閒置時 CPU 幾乎是 0。
+    /// M5 的過關條件是閒置 CPU < 1%，用 120 Hz 輪詢去追一個 10 Hz 的感測器過不了。
+    ///
+    /// 被推送的只有 report 1（1° 解析度），所以收到通知後立刻讀一次 report 7 拿細值。
+    public func startStreaming(onUpdate: @escaping (LidAngleSample) -> Void) {
+        guard !scheduled else { return }
+        self.onUpdate = onUpdate
+
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: inputBufferSize)
+        buffer.initialize(repeating: 0, count: inputBufferSize)
+        inputBuffer = buffer
+
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        IOHIDDeviceRegisterInputReportCallback(device, buffer, inputBufferSize,
+                                               { ctx, _, _, _, _, bytes, length in
+            guard let ctx else { return }
+            Unmanaged<LidSensor>.fromOpaque(ctx).takeUnretainedValue()
+                .handleInputReport(bytes: bytes, length: Int(length))
+        }, context)
+        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(),
+                                       CFRunLoopMode.defaultMode.rawValue)
+        scheduled = true
+    }
+
+    public func stopStreaming() {
+        guard scheduled else { return }
+        IOHIDDeviceRegisterInputReportCallback(device, inputBuffer!, inputBufferSize,
+                                               nil, nil)
+        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(),
+                                         CFRunLoopMode.defaultMode.rawValue)
+        inputBuffer?.deallocate()
+        inputBuffer = nil
+        onUpdate = nil
+        scheduled = false
+    }
+
+    /// 上一次推送帶來的粗值，用來判斷「到底有沒有在動」。
+    private var lastPushedCoarse: UInt16?
+    private var lastFine: UInt32 = 0
+
+    /// 感測器主動送了一筆 report 1。
+    ///
+    /// 推送本身已經把粗值（1°）帶來了，不用再讀一次。只有在粗值真的變了
+    /// —— 也就是上蓋在動 —— 才額外讀 report 7 拿 0.01° 的細值。
+    /// 靜止時因此完全不做 IPC，閒置耗電才壓得下來（M5 的過關條件）。
+    private func handleInputReport(bytes: UnsafePointer<UInt8>, length: Int) {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+
+        // 推送的 buffer 含 report ID 開頭（實測是 "01 71 00"）。
+        let coarse: UInt16
+        if length >= 3, bytes[0] == UInt8(Self.coarseReportID) {
+            coarse = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
+        } else if length >= 2 {
+            coarse = UInt16(bytes[0]) | (UInt16(bytes[1]) << 8)
+        } else {
+            return
+        }
+
+        if coarse != lastPushedCoarse || lastPushedCoarse == nil {
+            lastPushedCoarse = coarse
+            // 在動：去拿細值。
+            if fineAvailable,
+               let len = try? getReport(Self.fineReportID, into: &fineBuffer), len >= 5 {
+                let fine = UInt32(fineBuffer[1]) | (UInt32(fineBuffer[2]) << 8)
+                    | (UInt32(fineBuffer[3]) << 16) | (UInt32(fineBuffer[4]) << 24)
+                if abs(Double(fine) / 100.0 - Double(coarse)) <= Tuning.reportDisagreement {
+                    lastFine = fine
+                } else {
+                    disagreements += 1
+                    lastFine = UInt32(coarse) * 100
+                }
+            } else {
+                lastFine = UInt32(coarse) * 100
+            }
+        }
+        // 粗值沒變就沿用上次的細值：靜止時那點飄移是雜訊，不值得一次 IPC。
+
+        onUpdate?(LidAngleSample(
+            timestamp: timestamp,
+            theta: Double(lastFine) / 100.0,
+            thetaCoarse: Double(coarse),
+            rawFine: lastFine,
+            rawCoarse: coarse))
     }
 
     /// 讀一次目前角度。同步、阻塞（實測 < 1 ms）。

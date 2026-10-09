@@ -11,7 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let predictor = AnglePredictor()
     private let overlay = OverlayController()
 
-    private var pollTimer: Timer?
+    private let statusItem = StatusItemController()
+    private let debugWindow = DebugWindow()
+    /// 推送停掉時的保險，1 Hz。
+    private var fallbackTimer: Timer?
     private var capturing = false
 
     /// `--demo`：不碰上蓋，直接用假角度掃一遍，方便看渲染對不對。
@@ -59,12 +62,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !demoMode { NSApp.terminate(nil) }
         }
 
+        statusItem.onToggleEnabled = { [weak self] enabled in
+            Log.write(enabled ? "動畫已啟用" : "動畫已停用")
+            if !enabled { self?.overlay.hide() }
+        }
+        statusItem.onShowDebugWindow = { [weak self] in self?.debugWindow.show() }
+
         if demoMode {
             startDemo()
         } else {
-            pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / Tuning.activePollHz,
-                                             repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.poll() }
+            // 推送模式：感測器每 100 ms 主動送一次，不用我們輪詢。
+            sensor?.startStreaming { [weak self] sample in
+                MainActor.assumeIsolated { self?.handle(sample: sample) }
+            }
+            // 保險：萬一推送停了（裝置安靜下來），還是要有人推狀態機，
+            // 不然「停住了沒」「闔死了沒」永遠不會被判定。1 Hz 幾乎不耗電。
+            fallbackTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+                [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let sample = try? self.sensor?.read() else { return }
+                    self.handle(sample: sample)
+                }
             }
         }
     }
@@ -74,9 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastOmega: Double = 0
     private var displayWasAsleep = false
 
-    private func poll() {
-        guard let sensor, let sample = try? sensor.read() else { return }
-
+    /// 感測器送來一筆（或保險計時器補一筆）。
+    private func handle(sample: LidAngleSample) {
         // 螢幕亮起來的時間點 —— 開蓋動畫看得到多少，全看這個跟角度的賽跑。
         let asleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
         if asleep != displayWasAsleep {
@@ -96,12 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.write("已經開回原角度，收掉覆蓋窗")
             overlay.hide()
         }
+
+        // 選單與除錯視窗：只有真的有人在看的時候才更新。
+        statusItem.updateAngle(out.theta, state: machine.state)
+        debugWindow.update(theta: out.theta, predicted: predictor.current,
+                           omega: out.omega, state: machine.state,
+                           thetaOpen: machine.thetaOpen, overlayShowing: overlay.isShowing)
     }
 
     /// 停住之後的寬限計時器：在這段時間內又繼續闔，就沿用同一張快照。
     private var pauseTimer: Timer?
 
     private func handle(_ event: LidEvent) {
+        guard statusItem.isEnabled else { return }
         Log.write(String(format: "%@（θ=%.1f°）", event.rawValue, predictor.current))
         switch event {
         case .didStartClosing:

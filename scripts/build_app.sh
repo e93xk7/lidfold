@@ -14,6 +14,11 @@ CONFIG="${1:-debug}"
 APP="build/LidFold.app"
 IDENTITY="LidFold Dev"
 
+# 一定要先把跑著的那份殺掉再覆蓋。
+# 在行程跑著的時候換掉 .app 的內容，macOS 會判定「程式碼身分已變」，
+# 當場撤銷螢幕錄製權限（實測過，錯誤是 SCStreamError -3801 TCC denied）。
+pkill -f "LidFold.app/Contents/MacOS/LidFold" 2>/dev/null && sleep 1 || true
+
 swift build -c "$CONFIG"
 BIN=".build/$CONFIG/LidFoldApp"
 

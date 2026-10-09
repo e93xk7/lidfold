@@ -85,7 +85,9 @@ public final class LidStateMachine {
             if closedNow && !moving {
                 state = .closed
                 events.append(.didClose)
-            } else if closingVotes >= Tuning.confirmUpdates {
+            } else if closingVotes >= Tuning.confirmUpdates, !closedNow {
+                // 已經闔死了就不要再「開始闔」—— 睡醒那一刻 θ 會從記憶中的
+                // 開蓋角度瞬間變成 0，看起來像一次超快的闔蓋。沒東西好動畫。
                 if state == .opening { events.append(.didOpen) }
                 // 剛剛才停下來、而且上蓋沒有被往回打開 → 當成同一次闔蓋繼續，
                 // 沿用原本的 θ_open。重設虛擬平面會讓畫面瞬間跳回去再重來。
